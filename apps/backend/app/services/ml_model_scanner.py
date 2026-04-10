@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import joblib
 import pandas as pd
@@ -19,6 +21,10 @@ class DeepScanResult:
     model_name: str
     html_fetched: bool
     error: str | None = None
+    feature_signals: dict[str, float] | None = None
+    matched_brands: list[str] | None = None
+    brand_signal_score: float | None = None
+    campaign_fingerprint: str | None = None
 
 
 class MLModelScanner:
@@ -38,6 +44,7 @@ class MLModelScanner:
         self.scaler = self._load_artifact(scaler_path)
 
     async def scan(self, url: str) -> DeepScanResult:
+        default_fingerprint = self._build_campaign_fingerprint(url, [], 0.0)
         if self.model is None or self.scaler is None:
             return DeepScanResult(
                 url=url,
@@ -48,9 +55,18 @@ class MLModelScanner:
                 model_name="xgboost",
                 html_fetched=False,
                 error="Model or scaler artifact is unavailable.",
+                feature_signals=None,
+                matched_brands=None,
+                brand_signal_score=None,
+                campaign_fingerprint=default_fingerprint,
             )
 
         extracted = await self.feature_extractor.extract(url)
+        fingerprint = self._build_campaign_fingerprint(
+            url=url,
+            matched_brands=extracted.matched_brands,
+            brand_signal_score=extracted.brand_signal_score,
+        )
         if not extracted.html_fetched:
             return DeepScanResult(
                 url=url,
@@ -61,6 +77,10 @@ class MLModelScanner:
                 model_name="xgboost",
                 html_fetched=False,
                 error=extracted.fetch_error or "HTML could not be fetched.",
+                feature_signals=None,
+                matched_brands=extracted.matched_brands,
+                brand_signal_score=extracted.brand_signal_score,
+                campaign_fingerprint=fingerprint,
             )
 
         if extracted.vector.shape != (1, 48):
@@ -73,6 +93,10 @@ class MLModelScanner:
                 model_name="xgboost",
                 html_fetched=extracted.html_fetched,
                 error="Feature vector shape mismatch. Expected (1, 48).",
+                feature_signals=extracted.feature_map,
+                matched_brands=extracted.matched_brands,
+                brand_signal_score=extracted.brand_signal_score,
+                campaign_fingerprint=fingerprint,
             )
 
         try:
@@ -99,6 +123,10 @@ class MLModelScanner:
                 model_name="xgboost",
                 html_fetched=extracted.html_fetched,
                 error=extracted.fetch_error,
+                feature_signals=extracted.feature_map,
+                matched_brands=extracted.matched_brands,
+                brand_signal_score=extracted.brand_signal_score,
+                campaign_fingerprint=fingerprint,
             )
         except Exception as exc:
             return DeepScanResult(
@@ -110,7 +138,19 @@ class MLModelScanner:
                 model_name="xgboost",
                 html_fetched=extracted.html_fetched,
                 error=str(exc),
+                feature_signals=extracted.feature_map,
+                matched_brands=extracted.matched_brands,
+                brand_signal_score=extracted.brand_signal_score,
+                campaign_fingerprint=fingerprint,
             )
+
+    @staticmethod
+    def _build_campaign_fingerprint(url: str, matched_brands: list[str], brand_signal_score: float) -> str:
+        domain = urlparse(url).netloc.lower() or "unknown-domain"
+        brands = ",".join(sorted(set(matched_brands))) if matched_brands else "no-brand"
+        source = f"{domain}|{brands}|{round(brand_signal_score, 2)}"
+        digest = hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
+        return f"cmp_{digest}"
 
     @staticmethod
     def _load_artifact(path_str: str):

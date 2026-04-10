@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 ScanStatus = Literal["safe", "malicious", "unknown"]
+ScanMode = Literal["fast", "deep"]
 
 
 class ScanRequest(BaseModel):
@@ -58,3 +59,38 @@ class DeepScanResponse(BaseModel):
     model_name: str
     html_fetched: bool
     error: str | None = None
+    feature_signals: dict[str, float] | None = None
+    matched_brands: list[str] | None = None
+    brand_signal_score: float | None = None
+    campaign_fingerprint: str | None = None
+
+
+class BatchScanRequest(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=100)
+    mode: ScanMode = "fast"
+    include_feature_signals: bool = False
+
+
+class BatchScanItem(BaseModel):
+    url: str
+    original_input: str
+    normalized_url: str
+    tier: str
+    status: ScanStatus
+    risk_score: float | None = None
+    reason: str | None = None
+    malicious_probability: float | None = None
+    confidence: float | None = None
+    model_name: str | None = None
+    html_fetched: bool | None = None
+    error: str | None = None
+    feature_signals: dict[str, float] | None = None
+    matched_brands: list[str] | None = None
+    brand_signal_score: float | None = None
+    campaign_fingerprint: str | None = None
+
+
+class BatchScanResponse(BaseModel):
+    mode: ScanMode
+    total: int
+    results: list[BatchScanItem]

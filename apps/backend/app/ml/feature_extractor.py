@@ -12,12 +12,29 @@ from bs4 import BeautifulSoup
 class ExtractedFeaturePayload:
     vector: np.ndarray
     feature_map: dict[str, float]
+    matched_brands: list[str]
+    brand_signal_score: float
     html_fetched: bool
     fetch_error: str | None = None
 
 
 class FeatureExtractor:
     FEATURE_VECTOR_SIZE = 48
+    BRAND_KEYWORDS = [
+        "paypal",
+        "microsoft",
+        "apple",
+        "google",
+        "amazon",
+        "facebook",
+        "instagram",
+        "netflix",
+        "whatsapp",
+        "telegram",
+        "bank",
+        "visa",
+        "mastercard",
+    ]
     CORE_FEATURES = [
         "PctExtNullSelfRedirectHyperlinksRT",
         "PctExtHyperlinks",
@@ -44,14 +61,32 @@ class FeatureExtractor:
             return ExtractedFeaturePayload(
                 vector=vector,
                 feature_map={name: 0.0 for name in self.CORE_FEATURES},
+                matched_brands=[],
+                brand_signal_score=0.0,
                 html_fetched=False,
                 fetch_error=error,
             )
 
         soup = BeautifulSoup(html, "html.parser")
         core_features = self._build_core_features(normalized_url, soup)
+        matched_brands, brand_signal_score = self._extract_brand_signals(normalized_url, soup)
         vector = self._build_padded_vector(core_features)
-        return ExtractedFeaturePayload(vector=vector, feature_map=core_features, html_fetched=True)
+        return ExtractedFeaturePayload(
+            vector=vector,
+            feature_map=core_features,
+            matched_brands=matched_brands,
+            brand_signal_score=brand_signal_score,
+            html_fetched=True,
+        )
+
+    def _extract_brand_signals(self, url: str, soup: BeautifulSoup) -> tuple[list[str], float]:
+        title = (soup.title.string or "") if soup.title and soup.title.string else ""
+        text = soup.get_text(" ", strip=True)
+        combined = f"{url} {title} {text[:4000]}".lower()
+
+        matched = [brand for brand in self.BRAND_KEYWORDS if brand in combined]
+        score = min(100.0, float(len(matched) * 20.0))
+        return matched, score
 
     def _build_padded_vector(self, core_features: dict[str, float]) -> np.ndarray:
         values = [float(core_features.get(name, 0.0)) for name in self.CORE_FEATURES]

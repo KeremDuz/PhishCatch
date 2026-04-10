@@ -40,6 +40,58 @@ Tier-2 derin tarama (HTML özellik çıkarımı + scaler + XGBoost).
 }
 ```
 
+Not: `feature_signals` alanı deep tarafında çıkarılan temel HTML sinyallerini, `matched_brands` ve `brand_signal_score` sayfada geçen marka anahtar kelimesi sinyallerini, `campaign_fingerprint` ise benzer kampanya kümeleri için deterministik bir kimliği içerir.
+
+### `POST /api/v1/scan/batch`
+Toplu URL tarama (fast/deep).
+
+**Request (fast)**
+
+```json
+{
+  "mode": "fast",
+  "urls": ["example.com", "github.com"]
+}
+```
+
+**Request (deep + sinyal dahil)**
+
+```json
+{
+  "mode": "deep",
+  "include_feature_signals": true,
+  "urls": ["example.com", "google.com"]
+}
+```
+
+**Response (örnek)**
+
+```json
+{
+  "mode": "deep",
+  "total": 2,
+  "results": [
+    {
+      "url": "https://example.com",
+      "original_input": "example.com",
+      "normalized_url": "https://example.com",
+      "tier": "tier2_ml_deep",
+      "status": "unknown",
+      "risk_score": 0.0,
+      "malicious_probability": 0.0,
+      "confidence": 0.0,
+      "model_name": "xgboost",
+      "html_fetched": false,
+      "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+      "feature_signals": null,
+      "matched_brands": [],
+      "brand_signal_score": 0.0,
+      "campaign_fingerprint": "cmp_4a8f1e2d97bc"
+    }
+  ]
+}
+```
+
 **Response (örnek)**
 
 ```json
@@ -54,7 +106,10 @@ Tier-2 derin tarama (HTML özellik çıkarımı + scaler + XGBoost).
   "confidence": 0.0,
   "model_name": "xgboost",
   "html_fetched": false,
-  "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+  "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+  "matched_brands": [],
+  "brand_signal_score": 0.0,
+  "campaign_fingerprint": "cmp_4a8f1e2d97bc"
 }
 ```
 
