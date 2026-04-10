@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .env
 apps/backend/phishcatch_rf_model.pkl
+apps/backend/phishcatch_champion_model.pkl
+apps/backend/phishcatch_scaler.pkl
+apps/backend/feature_importance.png
+apps/backend/Mendeley_dataset/dataset
+apps/backend/Mendeley_dataset/index.sql
+apps/backend/Mendeley_dataset/Phishing_Legitimate_full.arff

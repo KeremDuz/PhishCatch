@@ -1,3 +1,3 @@
-from app.routers.analyze import router
+from app.routers.scan import router
 
 __all__ = ["router"]

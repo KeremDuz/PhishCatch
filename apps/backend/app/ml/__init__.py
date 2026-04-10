@@ -1,3 +1,3 @@
-from app.ml.feature_extractor import extract_features_dataframe, extract_features_dict
+from app.ml.feature_extractor import FeatureExtractor
 
-__all__ = ["extract_features_dict", "extract_features_dataframe"]
+__all__ = ["FeatureExtractor"]

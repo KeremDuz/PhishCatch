@@ -17,6 +17,8 @@ Bu repo artık monorepo düzeninde yapılandırılmıştır.
 - `Tier 2`: `MLModelScanner`
 - Zincir yürütümü: `apps/backend/app/core/pipeline.py`
 
+Detaylı backend API ve env dokümantasyonu için: `apps/backend/README.md`
+
 ## Backend Kurulum
 
 ```bash
