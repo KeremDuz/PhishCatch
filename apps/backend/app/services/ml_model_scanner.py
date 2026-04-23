@@ -9,6 +9,11 @@ from app.services.base_scanner import BaseScanner
 
 
 class MLModelScanner(BaseScanner):
+    # Kesin karar eşikleri
+    CONFIDENT_MALICIOUS = 0.95   # Bu üstü → kesin phishing, pipeline dur
+    CONFIDENT_CLEAN = 0.15       # Bu altı → kesin temiz, pipeline dur
+    # Arada kalan (0.15 - 0.95) → kararsız, HtmlScraper'a devret
+
     def __init__(self, settings: Settings) -> None:
         super().__init__(name="MLModelScanner")
         self.settings = settings
@@ -26,22 +31,59 @@ class MLModelScanner(BaseScanner):
             )
 
         confidence = self._predict_confidence(feature_frame)
-        is_malicious = confidence >= self.settings.ml_malicious_threshold
         malicious_probability = round(confidence, 4)
         clean_probability = round(1 - confidence, 4)
 
+        # Kesin karar verebildiği durumlar
+        if confidence >= self.CONFIDENT_MALICIOUS:
+            return StageResult(
+                scanner=self.name,
+                verdict="malicious",
+                confidence=malicious_probability,
+                malicious_probability=malicious_probability,
+                clean_probability=clean_probability,
+                reason="ML model: HIGH confidence phishing",
+                details={
+                    "threshold": self.settings.ml_malicious_threshold,
+                    "model_path": self.settings.ml_model_path,
+                    "decision": "confident_malicious",
+                },
+            )
+
+        if confidence <= self.CONFIDENT_CLEAN:
+            return StageResult(
+                scanner=self.name,
+                verdict="clean",
+                confidence=malicious_probability,
+                malicious_probability=malicious_probability,
+                clean_probability=clean_probability,
+                reason="ML model: HIGH confidence clean",
+                details={
+                    "threshold": self.settings.ml_malicious_threshold,
+                    "model_path": self.settings.ml_model_path,
+                    "decision": "confident_clean",
+                },
+            )
+
+        # Kararsız bölge → pipeline devam etsin (HtmlScraper'a düşsün)
         return StageResult(
             scanner=self.name,
-            verdict="malicious" if is_malicious else "clean",
+            verdict="unknown",
             confidence=malicious_probability,
             malicious_probability=malicious_probability,
             clean_probability=clean_probability,
-            reason="ML model decision",
+            reason=f"ML model uncertain (confidence: {malicious_probability}), needs deeper analysis",
             details={
                 "threshold": self.settings.ml_malicious_threshold,
                 "model_path": self.settings.ml_model_path,
+                "decision": "uncertain",
             },
         )
+
+    def should_halt(self, result: StageResult) -> bool:
+        """ML kesin karar verdiyse dur. Kararsızsa devam et."""
+        decision = result.details.get("decision", "")
+        return decision in ("confident_malicious", "confident_clean")
 
     @staticmethod
     def _load_model(model_path: str):

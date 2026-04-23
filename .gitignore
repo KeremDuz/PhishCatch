@@ -1,8 +1,29 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
 .env
 apps/backend/phishcatch_rf_model.pkl
 apps/backend/Mendeley_dataset
 apps/backend/phishcatch_scaler.pkl
 apps/backend/phishcatch_champion_model.pkl
+
+# Generated model artifacts and datasets
+apps/backend/phishcatch_rf_model_*.pkl
+apps/backend/phishcatch_scaler_*.pkl
+apps/backend/phishcatch_training_data_*.csv
+
+# Generated benchmark / feed outputs
+apps/backend/feed*_results.json
+apps/backend/feed_*_results.csv
+apps/backend/feed_*_review_*.csv
+apps/backend/model_benchmark_summary.csv
+
+# Local scratch/test input files
+apps/backend/feed1.txt
+
+# Accidental local app scaffold (very large)
+apps/flutter_app/

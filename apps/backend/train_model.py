@@ -1,41 +1,64 @@
+from __future__ import annotations
+
+import joblib
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
-import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
-print("1. Veri seti yükleniyor...")
-# Az önce oluşturduğumuz dosyayı okuyoruz
-df = pd.read_csv('phishcatch_training_data.csv')
+INPUT_DATA_PATH = "phishcatch_training_data_48.csv"
+MODEL_OUTPUT_PATH = "phishcatch_rf_model_48.pkl"
+SCALER_OUTPUT_PATH = "phishcatch_scaler_48.pkl"
+TARGET_COLUMN = "result"
 
-# Eksik veya hatalı satırları (NaN) temizliyoruz ki model hata vermesin
-df = df.dropna()
 
-print("2. Veriler eğitim ve test olarak ayrılıyor...")
-# 'result' kolonu bizim etiketimiz (0: Temiz, 1: Phishing)
-# Geri kalan tüm kolonlar ise özelliklerimiz (X)
-X = df.drop('result', axis=1)
-y = df['result']
+def main() -> None:
+    print("1. Eğitim verisi yükleniyor...")
+    dataframe = pd.read_csv(INPUT_DATA_PATH)
 
-# Verinin %80'ini eğitime, %20'sini test etmeye ayırıyoruz
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    if TARGET_COLUMN not in dataframe.columns:
+        raise ValueError(f"{INPUT_DATA_PATH} must include '{TARGET_COLUMN}' column")
 
-print("3. Random Forest Modeli eğitiliyor... (Bu biraz sürebilir)")
-# 100 karar ağacından oluşan bir model kuruyoruz
-model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-model.fit(X_train, y_train)
+    features = dataframe.drop(columns=[TARGET_COLUMN])
+    labels = dataframe[TARGET_COLUMN].astype(int)
 
-print("4. Model test ediliyor...")
-# Modelin daha önce hiç görmediği %20'lik test verisiyle tahmin yaptırıyoruz
-y_pred = model.predict(X_test)
+    print(f"Veri boyutu: {len(features)} satır, {features.shape[1]} feature")
 
-# Sonuçları hesaplıyoruz
-accuracy = accuracy_score(y_test, y_pred)
-print(f"\nModel Başarı Oranı (Accuracy): % {accuracy * 100:.2f}")
-print("\nDetaylı Sınıflandırma Raporu:")
-print(classification_report(y_test, y_pred, target_names=['Temiz (0)', 'Zararlı (1)']))
+    x_train, x_test, y_train, y_test = train_test_split(
+        features,
+        labels,
+        test_size=0.2,
+        random_state=42,
+        stratify=labels,
+    )
 
-print("\n5. Model kaydediliyor...")
-# Eğitilmiş modeli daha sonra API'de kullanmak üzere diske kaydediyoruz
-joblib.dump(model, 'phishcatch_rf_model.pkl')
-print("İşlem tamam! 'phishcatch_rf_model.pkl' dosyası başarıyla oluşturuldu.")
+    scaler = StandardScaler()
+    x_train_scaled = scaler.fit_transform(x_train)
+    x_test_scaled = scaler.transform(x_test)
+
+    print("2. Model eğitiliyor (RandomForest)...")
+    model = RandomForestClassifier(
+        n_estimators=300,
+        random_state=42,
+        n_jobs=-1,
+        class_weight="balanced_subsample",
+        min_samples_leaf=2,
+    )
+    model.fit(x_train_scaled, y_train)
+
+    print("3. Test setinde değerlendirme yapılıyor...")
+    predictions = model.predict(x_test_scaled)
+    accuracy = accuracy_score(y_test, predictions)
+
+    print("\n✅ Model Değerlendirme Sonucu")
+    print(f"Accuracy: {accuracy:.6f}")
+    print("\nSınıflandırma Raporu:\n", classification_report(y_test, predictions, digits=4))
+
+    joblib.dump(model, MODEL_OUTPUT_PATH)
+    joblib.dump(scaler, SCALER_OUTPUT_PATH)
+    print(f"\n🎉 Model kaydedildi: {MODEL_OUTPUT_PATH}")
+    print(f"🎉 Scaler kaydedildi: {SCALER_OUTPUT_PATH}")
+
+if __name__ == "__main__":
+    main()
