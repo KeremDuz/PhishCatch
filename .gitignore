@@ -26,6 +26,3 @@ apps/backend/model_benchmark_summary.csv
 
 # Local scratch/test input files
 apps/backend/feed1.txt
-
-# Accidental local app scaffold (very large)
-apps/flutter_app/
