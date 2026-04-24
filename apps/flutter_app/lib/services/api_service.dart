@@ -86,10 +86,16 @@ class StageResult {
 class PhishCatchApiService {
   static const String _configuredBaseUrl =
       String.fromEnvironment('PHISHCATCH_API_BASE_URL');
+  static const String _productionBaseUrl =
+      'https://phishcatch-p4jc.onrender.com';
 
   static String get _baseUrl {
     if (_configuredBaseUrl.isNotEmpty) {
       return _configuredBaseUrl;
+    }
+
+    if (kReleaseMode) {
+      return _productionBaseUrl;
     }
 
     if (kIsWeb) {
