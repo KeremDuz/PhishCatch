@@ -17,10 +17,10 @@ def get_scanning_pipeline() -> ScanningPipeline:
     
     1. UrlResolver     → Kısa link çöz (bit.ly → gerçek URL)
     2. WhoisScanner    → Domain yaşı kontrol (<30 gün = şüpheli)
-    3. URLhaus         → Ücretsiz, sınırsız. Bilinen malware URL veritabanı
+    3. URLhaus         → Bilinen malware URL veritabanı
     4. SafeBrowsing    → Google kara listesi (10K/gün, opsiyonel)
     5. MLModel         → 48 feature ile sınıflandır
-                         - Kesin malicious (>=0.85) → DUR
+                         - Kesin malicious (>=0.95) → DUR
                          - Kesin clean (<=0.15) → DUR
                          - Kararsız (0.15-0.85) → devam et ↓
     6. HtmlScraper     → DOM analizi (sadece ML kararsızsa çalışır)
@@ -33,11 +33,10 @@ def get_scanning_pipeline() -> ScanningPipeline:
         WhoisScanner(),
     ]
 
-    # URLhaus — key varsa ekle (ücretsiz, sınırsız)
-    if settings.urlhaus_auth_key:
-        scanners.append(
-            UrlhausScanner(auth_key=settings.urlhaus_auth_key)
-        )
+    # URLhaus — query endpoint can run without a key; key is optional.
+    scanners.append(
+        UrlhausScanner(auth_key=settings.urlhaus_auth_key)
+    )
 
     # Google Safe Browsing — key varsa ekle (10K/gün)
     if settings.google_safe_browsing_api_key:

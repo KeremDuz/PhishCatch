@@ -1,10 +1,11 @@
 import re
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
+from app.services.url_safety import validate_public_http_url
 
 
 # ─── Hacker'ın çalmak istediği veri türleri ve bunları yakalayan kalıplar ───
@@ -356,16 +357,16 @@ def _scan_iframes(soup: BeautifulSoup, base_domain: str) -> list:
 class HtmlScraperScanner(BaseScanner):
     def __init__(self) -> None:
         super().__init__(name="HtmlScraper")
+        self.max_redirects = 5
 
     def scan(self, url: str) -> StageResult:
-        parsed_url = urlparse(url)
-        base_domain = parsed_url.netloc
-
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
-            response = requests.get(url, headers=headers, timeout=5, stream=True)
+            response, final_url, redirect_chain = self._safe_get(url, headers=headers)
+            parsed_url = urlparse(final_url)
+            base_domain = parsed_url.netloc
 
             content_type = response.headers.get("Content-Type", "")
             if "text/html" not in content_type:
@@ -551,6 +552,8 @@ class HtmlScraperScanner(BaseScanner):
                     if v
                 },
                 "external_iframes": len(external_iframes),
+                "final_url": final_url,
+                "redirect_chain": redirect_chain,
                 "reasons": reasons,
             }
 
@@ -565,7 +568,7 @@ class HtmlScraperScanner(BaseScanner):
             elif threat_score >= 0.3:
                 return StageResult(
                     scanner=self.name,
-                    verdict="malicious",
+                    verdict="unknown",
                     confidence=round(threat_score, 4),
                     reason=" | ".join(reasons[:5]),
                     details=details,
@@ -585,3 +588,39 @@ class HtmlScraperScanner(BaseScanner):
                 reason="Failed to scrape HTML content",
                 details={"error": str(e)},
             )
+
+    def _safe_get(self, url: str, headers: dict[str, str]) -> tuple[requests.Response, str, list[dict]]:
+        current_url = url
+        redirect_chain = []
+
+        for _ in range(self.max_redirects + 1):
+            safety = validate_public_http_url(current_url)
+            if not safety.is_safe:
+                raise ValueError(f"URL fetch blocked: {safety.reason}")
+
+            response = requests.get(
+                current_url,
+                headers=headers,
+                timeout=5,
+                stream=True,
+                allow_redirects=False,
+            )
+
+            if not response.is_redirect:
+                return response, current_url, redirect_chain
+
+            location = response.headers.get("Location")
+            if not location:
+                return response, current_url, redirect_chain
+
+            next_url = urljoin(current_url, location)
+            redirect_chain.append(
+                {
+                    "from": current_url,
+                    "to": next_url,
+                    "status_code": response.status_code,
+                }
+            )
+            current_url = next_url
+
+        raise ValueError("Maximum redirect depth exceeded")

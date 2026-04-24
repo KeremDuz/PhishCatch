@@ -1,0 +1,20 @@
+{
+  "model_name": "phishcatch-url-lexical",
+  "model_version": "local-dev",
+  "feature_schema": "url_lexical_v1",
+  "model_path": "phishcatch_url_model.pkl",
+  "scaler_path": null,
+  "training_data": "phishcatch_training_data_url.csv",
+  "metrics": {
+    "accuracy": null,
+    "precision": null,
+    "recall": null,
+    "f1": null
+  },
+  "thresholds": {
+    "malicious": 0.5,
+    "confident_malicious": 0.95,
+    "confident_clean": 0.15
+  },
+  "notes": "New models should use URL-only lexical features. DOM/form/JS signals are handled by HtmlScraperScanner."
+}

@@ -1,12 +1,11 @@
 import requests
-from urllib.parse import urlparse
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
 
 
 class UrlhausScanner(BaseScanner):
-    """abuse.ch URLhaus — tamamen ücretsiz, API key gereksiz, sınırsız sorgu.
+    """abuse.ch URLhaus — query endpoint can be used without an API key.
     
     Malware URL veritabanı. Bilinen kötücül URL'leri kontrol eder.
     https://urlhaus-api.abuse.ch/
@@ -19,15 +18,8 @@ class UrlhausScanner(BaseScanner):
         self.auth_key = auth_key
 
     def scan(self, url: str) -> StageResult:
-        if not self.auth_key:
-            return StageResult(
-                scanner=self.name,
-                verdict="unknown",
-                reason="URLHAUS_AUTH_KEY not configured",
-            )
-
         try:
-            headers = {"Auth-Key": self.auth_key}
+            headers = {"Auth-Key": self.auth_key} if self.auth_key else {}
             response = requests.post(
                 self.API_URL,
                 data={"url": url},

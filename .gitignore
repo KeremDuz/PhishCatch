@@ -5,11 +5,13 @@ __pycache__/
 *.pyd
 .pytest_cache/
 .mypy_cache/
+.vscode/
 .env
 apps/backend/phishcatch_rf_model.pkl
 apps/backend/Mendeley_dataset
 apps/backend/phishcatch_scaler.pkl
 apps/backend/phishcatch_champion_model.pkl
+apps/backend/phishcatch_url_model.pkl
 
 # Generated model artifacts and datasets
 apps/backend/phishcatch_rf_model_*.pkl
