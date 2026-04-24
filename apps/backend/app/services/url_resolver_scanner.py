@@ -30,6 +30,7 @@ class UrlResolverScanner(BaseScanner):
                     return StageResult(
                         scanner=self.name,
                         verdict="unknown",
+                        risk_score=0.9,
                         reason=f"URL fetch blocked: {safety.reason}",
                         details={
                             "original_url": url,
@@ -66,6 +67,7 @@ class UrlResolverScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.4,
                     reason="Maximum redirect depth exceeded",
                     details={
                         "original_url": url,
@@ -78,6 +80,7 @@ class UrlResolverScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="clean",
+                    risk_score=0.0,
                     reason="URL redirected to a new destination",
                     details={
                         "original_url": url,
@@ -90,6 +93,7 @@ class UrlResolverScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="clean",
+                risk_score=0.0,
                 reason="No redirects detected",
                 details={
                     "original_url": url,
@@ -102,6 +106,7 @@ class UrlResolverScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.2,
                 reason="Failed to resolve URL (network error or timeout)",
                 details={"error": str(e), "resolved_url": url},
             )

@@ -10,9 +10,12 @@ FastAPI tabanlı URL phishing analiz servisi. Repo şu an sürüm takibinde back
 4. `GoogleSafeBrowsingScanner`: API key varsa Google Safe Browsing sorgular.
 5. `VirusTotalScanner`: API key varsa VirusTotal sorgular.
 6. `MLModelScanner`: Yeni modeller için URL-only lexical feature şeması kullanır; eski 48-feature ve legacy 16-feature artifact'leri de uyumluluk için desteklenir.
-7. `HtmlScraperScanner`: ML kararsızsa DOM/form/JS sinyallerini inceler.
+7. `HtmlScraperScanner`: DOM/form/JS sinyallerini inceler.
+8. `RiskAggregator`: Tüm sinyalleri birleştirip kullanıcıya binary `malicious` veya `clean` sonucu döndürür.
 
 URL fetch eden scanner'lar localhost/private/reserved IP hedeflerini engeller ve redirect'leri manuel takip eder.
+Bu tip güvenli olmayan hedefler üçüncü taraf reputation servislerine de gönderilmez; ilgili stage'ler `skipped` olarak raporlanır.
+Tekil scanner'lar artık final kararı erken kesmez; WHOIS gibi zayıf sinyaller risk puanına katkı yapar, URLhaus/Google Safe Browsing/VirusTotal gibi güçlü reputation kaynakları daha yüksek ağırlık alır.
 
 ## Kurulum
 
@@ -59,6 +62,8 @@ cd /home/keremduz/Phishing_detection_system/apps/backend
 source ../../.venv/bin/activate
 python scripts/check_url.py -u "https://example.com"
 ```
+
+API yanıtında `final_verdict`, `risk_score`, `confidence`, `summary`, `signals` ve scanner bazlı `stages` bulunur. Uygulama tarafında kullanıcıya `final_verdict` gösterilmeli; debug veya açıklama ekranı için `summary/signals/stages` kullanılabilir.
 
 ## Model Eğitimi
 

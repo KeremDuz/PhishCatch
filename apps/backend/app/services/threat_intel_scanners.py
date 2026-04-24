@@ -31,6 +31,7 @@ class UrlhausScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason=f"URLhaus API error (status: {response.status_code})",
                     details={"status_code": response.status_code},
                 )
@@ -42,6 +43,7 @@ class UrlhausScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="URL not found in URLhaus database",
                     details={"query_status": query_status},
                 )
@@ -55,6 +57,7 @@ class UrlhausScanner(BaseScanner):
                     scanner=self.name,
                     verdict="malicious",
                     confidence=0.95,
+                    risk_score=0.97,
                     reason=f"URLhaus: known malicious URL (threat: {threat}, status: {url_status})",
                     details={
                         "threat": threat,
@@ -67,6 +70,7 @@ class UrlhausScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason=f"URLhaus unexpected response: {query_status}",
                 details={"query_status": query_status},
             )
@@ -75,6 +79,7 @@ class UrlhausScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="URLhaus network error",
                 details={"error": str(e)},
             )
@@ -99,6 +104,7 @@ class GoogleSafeBrowsingScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="GOOGLE_SAFE_BROWSING_API_KEY not configured",
             )
 
@@ -131,6 +137,7 @@ class GoogleSafeBrowsingScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason=f"Google Safe Browsing API error (status: {response.status_code})",
                     details={"status_code": response.status_code},
                 )
@@ -142,6 +149,7 @@ class GoogleSafeBrowsingScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="URL not flagged by Google Safe Browsing",
                     details={"matches": 0},
                 )
@@ -152,6 +160,7 @@ class GoogleSafeBrowsingScanner(BaseScanner):
                 scanner=self.name,
                 verdict="malicious",
                 confidence=0.95,
+                risk_score=0.97,
                 reason=f"Google Safe Browsing: flagged as {', '.join(threat_types)}",
                 details={
                     "threat_types": threat_types,
@@ -163,6 +172,7 @@ class GoogleSafeBrowsingScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="Google Safe Browsing network error",
                 details={"error": str(e)},
             )

@@ -17,6 +17,7 @@ class VirusTotalScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="VIRUSTOTAL_API_KEY not configured",
             )
 
@@ -34,6 +35,7 @@ class VirusTotalScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="URL not found in VirusTotal",
                     details={"status_code": 404},
                 )
@@ -42,6 +44,7 @@ class VirusTotalScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="VirusTotal rate limit reached, fallback to ML",
                     details={"status_code": 429},
                 )
@@ -50,6 +53,7 @@ class VirusTotalScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="VirusTotal request failed, fallback to ML",
                     details={"status_code": response.status_code},
                 )
@@ -60,10 +64,12 @@ class VirusTotalScanner(BaseScanner):
 
             if malicious_hits > 0 or suspicious_hits > 0:
                 confidence = min(1.0, (malicious_hits + suspicious_hits) / 10)
+                risk_score = min(0.95, max(0.65, ((malicious_hits * 2) + suspicious_hits) / 8))
                 return StageResult(
                     scanner=self.name,
                     verdict="malicious",
                     confidence=round(confidence, 4),
+                    risk_score=round(risk_score, 4),
                     reason="VirusTotal flagged URL",
                     details={"analysis_stats": stats},
                 )
@@ -71,6 +77,7 @@ class VirusTotalScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="VirusTotal clean/unrated result, fallback to ML",
                 details={"analysis_stats": stats},
             )
@@ -78,6 +85,7 @@ class VirusTotalScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="VirusTotal network error, fallback to ML",
                 details={"error": str(exc)},
             )

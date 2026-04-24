@@ -39,6 +39,7 @@ class StageResult(BaseModel):
     scanner: str
     verdict: Verdict
     confidence: float | None = None
+    risk_score: float | None = None
     malicious_probability: float | None = None
     clean_probability: float | None = None
     reason: str | None = None
@@ -51,7 +52,10 @@ class AnalyzeUrlResponse(BaseModel):
     normalized_url: str
     final_verdict: Verdict
     confidence: float | None = None
+    risk_score: float | None = None
     malicious_probability: float | None = None
     clean_probability: float | None = None
     decided_by: str
+    summary: str | None = None
+    signals: dict[str, Any] = Field(default_factory=dict)
     stages: list[StageResult]

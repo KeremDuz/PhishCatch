@@ -373,6 +373,7 @@ class HtmlScraperScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="Target is not a valid HTML page",
                 )
 
@@ -562,6 +563,7 @@ class HtmlScraperScanner(BaseScanner):
                     scanner=self.name,
                     verdict="malicious",
                     confidence=round(threat_score, 4),
+                    risk_score=round(threat_score, 4),
                     reason=" | ".join(reasons[:5]),
                     details=details,
                 )
@@ -570,6 +572,7 @@ class HtmlScraperScanner(BaseScanner):
                     scanner=self.name,
                     verdict="unknown",
                     confidence=round(threat_score, 4),
+                    risk_score=round(threat_score, 4),
                     reason=" | ".join(reasons[:5]),
                     details=details,
                 )
@@ -577,6 +580,7 @@ class HtmlScraperScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="clean",
+                    risk_score=round(threat_score, 4),
                     reason="DOM structure appears normal",
                     details=details,
                 )
@@ -585,6 +589,7 @@ class HtmlScraperScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=None,
                 reason="Failed to scrape HTML content",
                 details={"error": str(e)},
             )

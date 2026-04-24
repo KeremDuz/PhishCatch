@@ -1,4 +1,5 @@
 import datetime
+import ipaddress
 from urllib.parse import urlparse
 
 from app.models.schemas import StageResult
@@ -14,16 +15,22 @@ class WhoisScanner(BaseScanner):
     def scan(self, url: str) -> StageResult:
         try:
             parsed = urlparse(url)
-            domain = parsed.netloc.split(":")[0]  # Remove port if exists
+            domain = parsed.hostname or ""
 
-            if not domain or domain.replace(".", "").isnumeric():
-                # Direct IP or no domain
+            try:
+                ipaddress.ip_address(domain)
+                is_ip_address = True
+            except ValueError:
+                is_ip_address = False
+
+            if not domain or is_ip_address:
                 return StageResult(
                     scanner=self.name,
-                    verdict="malicious",
+                    verdict="unknown",
                     confidence=0.6,
+                    risk_score=0.55,
                     reason="Direct IP address used instead of domain",
-                    details={"domain": domain},
+                    details={"domain": domain, "signal": "direct_ip"},
                 )
 
             # Use subprocess to run whois command natively with timeout
@@ -45,6 +52,7 @@ class WhoisScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="WHOIS lookup timed out",
                     details={"domain": domain},
                 )
@@ -57,6 +65,7 @@ class WhoisScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    risk_score=0.0,
                     reason="Domain creation date not found",
                     details={"domain": domain},
                 )
@@ -67,24 +76,38 @@ class WhoisScanner(BaseScanner):
             age_days = (datetime.datetime.now().replace(tzinfo=None) - creation_date).days
             
             if age_days < self.suspicious_days:
+                risk_score = max(0.3, 0.55 - (age_days / self.suspicious_days * 0.25))
                 return StageResult(
                     scanner=self.name,
-                    verdict="malicious",
+                    verdict="unknown",
                     confidence=max(0.6, 1.0 - (age_days / self.suspicious_days)),
+                    risk_score=round(risk_score, 4),
                     reason=f"Domain is very new (created {age_days} days ago)",
-                    details={"domain": domain, "age_days": age_days, "creation_date": str(creation_date)},
+                    details={
+                        "domain": domain,
+                        "age_days": age_days,
+                        "creation_date": str(creation_date),
+                        "signal": "new_domain",
+                    },
                 )
             else:
                 return StageResult(
                     scanner=self.name,
                     verdict="clean",
+                    risk_score=0.0,
                     reason=f"Domain is established ({age_days} days old)",
-                    details={"domain": domain, "age_days": age_days, "creation_date": str(creation_date)},
+                    details={
+                        "domain": domain,
+                        "age_days": age_days,
+                        "creation_date": str(creation_date),
+                        "signal": "established_domain",
+                    },
                 )
         except Exception as e:
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=0.0,
                 reason="Failed to execute WHOIS lookup",
                 details={"error": str(e)},
             )

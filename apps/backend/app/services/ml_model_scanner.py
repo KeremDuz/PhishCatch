@@ -30,6 +30,7 @@ class MLModelScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=None,
                 reason="ML model unavailable (not found or failed to load)",
                 details={"model_path": self.settings.ml_model_path},
             )
@@ -42,6 +43,7 @@ class MLModelScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                risk_score=None,
                 reason="ML model prediction failed",
                 details={
                     "error": str(exc),
@@ -68,6 +70,7 @@ class MLModelScanner(BaseScanner):
                 scanner=self.name,
                 verdict="malicious",
                 confidence=malicious_probability,
+                risk_score=malicious_probability,
                 malicious_probability=malicious_probability,
                 clean_probability=clean_probability,
                 reason="ML model: high confidence phishing",
@@ -79,7 +82,8 @@ class MLModelScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="clean",
-                confidence=malicious_probability,
+                confidence=clean_probability,
+                risk_score=malicious_probability,
                 malicious_probability=malicious_probability,
                 clean_probability=clean_probability,
                 reason="ML model: high confidence clean",
@@ -91,6 +95,7 @@ class MLModelScanner(BaseScanner):
             scanner=self.name,
             verdict="unknown",
             confidence=malicious_probability,
+            risk_score=malicious_probability,
             malicious_probability=malicious_probability,
             clean_probability=clean_probability,
             reason=f"ML model uncertain (confidence: {malicious_probability}), needs deeper analysis",

@@ -13,20 +13,18 @@ from app.services.threat_intel_scanners import UrlhausScanner, GoogleSafeBrowsin
 @lru_cache(maxsize=1)
 def get_scanning_pipeline() -> ScanningPipeline:
     """
-    YENİ AKIŞ:
+    Backend karar akışı:
     
-    1. UrlResolver     → Kısa link çöz (bit.ly → gerçek URL)
-    2. WhoisScanner    → Domain yaşı kontrol (<30 gün = şüpheli)
-    3. URLhaus         → Bilinen malware URL veritabanı
-    4. SafeBrowsing    → Google kara listesi (10K/gün, opsiyonel)
-    5. MLModel         → 48 feature ile sınıflandır
-                         - Kesin malicious (>=0.95) → DUR
-                         - Kesin clean (<=0.15) → DUR
-                         - Kararsız (0.15-0.85) → devam et ↓
-    6. HtmlScraper     → DOM analizi (sadece ML kararsızsa çalışır)
-                         Credential, kredi kartı, OTP, keylogger vb. tarar
+    1. UrlResolver     → Kısa link çöz, güvenli fetch sınırlarını uygula
+    2. WhoisScanner    → Domain yaşı / direkt IP sinyali üret
+    3. URLhaus         → Bilinen kötü URL veritabanı
+    4. SafeBrowsing    → Google kara listesi (opsiyonel)
+    5. VirusTotal      → Opsiyonel reputation sinyali
+    6. MLModel         → URL-only model ile hızlı lexical skor
+    7. HtmlScraper     → DOM/form/JS davranış analizi
+    8. RiskAggregator  → Tüm sinyalleri birleştirip phishing/clean döndürür
     
-    VirusTotal opsiyonel — API key varsa eklenir, yoksa atlanır.
+    Scanner'lar tek başına final karar vermez; final karar risk aggregator'dadır.
     """
     scanners = [
         UrlResolverScanner(),
@@ -48,10 +46,10 @@ def get_scanning_pipeline() -> ScanningPipeline:
     if settings.virustotal_api_key:
         scanners.append(VirusTotalScanner(settings=settings))
 
-    # ML Model — hızlı karar. Kesinse durur, kararsızsa devam eder
+    # ML Model — hızlı URL lexical sinyal üretir
     scanners.append(MLModelScanner(settings=settings))
 
-    # HtmlScraper — yavaş ama derin. Sadece ML kararsız kaldığında çalışır
+    # HtmlScraper — yavaş ama derin DOM/form sinyali üretir
     scanners.append(HtmlScraperScanner())
 
     return ScanningPipeline(scanners=scanners)

@@ -35,7 +35,7 @@ class Settings(BaseModel):
 
     google_safe_browsing_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_SAFE_BROWSING_API_KEY"))
 
-    ml_model_path: str = os.getenv("ML_MODEL_PATH", "phishcatch_rf_model_48.pkl")
+    ml_model_path: str = os.getenv("ML_MODEL_PATH", "phishcatch_url_model.pkl")
     ml_scaler_path: str | None = Field(default_factory=lambda: os.getenv("ML_SCALER_PATH") or None)
     ml_malicious_threshold: float = float(os.getenv("ML_MALICIOUS_THRESHOLD", "0.5"))
     ml_confident_malicious_threshold: float = float(os.getenv("ML_CONFIDENT_MALICIOUS_THRESHOLD", "0.95"))
