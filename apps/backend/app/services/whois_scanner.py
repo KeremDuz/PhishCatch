@@ -1,9 +1,8 @@
 import datetime
-import ipaddress
-from urllib.parse import urlparse
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
+from app.utils.url_utils import is_ip_hostname, parse_url_parts
 
 
 class WhoisScanner(BaseScanner):
@@ -14,14 +13,9 @@ class WhoisScanner(BaseScanner):
 
     def scan(self, url: str) -> StageResult:
         try:
-            parsed = urlparse(url)
-            domain = parsed.hostname or ""
-
-            try:
-                ipaddress.ip_address(domain)
-                is_ip_address = True
-            except ValueError:
-                is_ip_address = False
+            url_parts = parse_url_parts(url)
+            domain = url_parts.ascii_hostname
+            is_ip_address = is_ip_hostname(domain)
 
             if not domain or is_ip_address:
                 return StageResult(

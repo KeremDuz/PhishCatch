@@ -18,6 +18,12 @@ class AnalyzeUrlRequestTests(unittest.TestCase):
         self.assertEqual(payload.url, "http://example.com")
         self.assertEqual(payload.original_input, "http://example.com")
 
+    def test_canonicalizes_unicode_hostname(self):
+        payload = AnalyzeUrlRequest.model_validate({"url": "https://\u0440\u0430ypal-login.example.com"})
+
+        self.assertTrue(payload.url.startswith("https://xn--"))
+        self.assertEqual(payload.original_input, "https://\u0440\u0430ypal-login.example.com")
+
     def test_rejects_empty_url(self):
         with self.assertRaises(ValidationError):
             AnalyzeUrlRequest.model_validate({"url": "   "})

@@ -21,7 +21,37 @@ class RiskAggregatorTests(unittest.TestCase):
         self.assertEqual(decision.final_verdict, "malicious")
         self.assertGreaterEqual(decision.risk_score, 0.95)
 
-    def test_weak_whois_signal_alone_stays_clean(self):
+    def test_threat_intel_hit_is_not_erased_by_clean_offsets(self):
+        decision = RiskAggregator().aggregate(
+            [
+                StageResult(
+                    scanner="GoogleSafeBrowsing",
+                    verdict="malicious",
+                    confidence=0.95,
+                    risk_score=0.97,
+                    reason="Google Safe Browsing: social engineering",
+                ),
+                StageResult(
+                    scanner="MLModelScanner",
+                    verdict="clean",
+                    malicious_probability=0.01,
+                    clean_probability=0.99,
+                    reason="ML model: high confidence clean",
+                ),
+                StageResult(
+                    scanner="HtmlScraper",
+                    verdict="clean",
+                    risk_score=0.0,
+                    reason="DOM structure appears normal",
+                    details={"threat_score": 0.0},
+                ),
+            ]
+        )
+
+        self.assertEqual(decision.final_verdict, "malicious")
+        self.assertGreaterEqual(decision.risk_score, 0.95)
+
+    def test_weak_whois_signal_alone_returns_unknown(self):
         decision = RiskAggregator().aggregate(
             [
                 StageResult(
@@ -34,8 +64,24 @@ class RiskAggregatorTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(decision.final_verdict, "clean")
+        self.assertEqual(decision.final_verdict, "unknown")
         self.assertLess(decision.risk_score, RiskAggregator.MALICIOUS_THRESHOLD)
+        self.assertGreaterEqual(decision.risk_score, RiskAggregator.UNKNOWN_THRESHOLD)
+
+    def test_low_risk_signal_below_review_band_stays_clean(self):
+        decision = RiskAggregator().aggregate(
+            [
+                StageResult(
+                    scanner="UrlResolver",
+                    verdict="unknown",
+                    risk_score=0.2,
+                    reason="Long redirect chain",
+                )
+            ]
+        )
+
+        self.assertEqual(decision.final_verdict, "clean")
+        self.assertLess(decision.risk_score, RiskAggregator.UNKNOWN_THRESHOLD)
 
     def test_combined_medium_signals_return_malicious(self):
         decision = RiskAggregator().aggregate(
@@ -52,6 +98,52 @@ class RiskAggregatorTests(unittest.TestCase):
                     verdict="unknown",
                     risk_score=0.4,
                     reason="Sensitive form behavior detected",
+                ),
+            ]
+        )
+
+        self.assertEqual(decision.final_verdict, "malicious")
+        self.assertGreaterEqual(decision.risk_score, RiskAggregator.MALICIOUS_THRESHOLD)
+
+    def test_strong_html_signal_is_not_erased_by_clean_ml(self):
+        decision = RiskAggregator().aggregate(
+            [
+                StageResult(
+                    scanner="HtmlScraper",
+                    verdict="malicious",
+                    risk_score=0.82,
+                    reason="HTML model phishing probability 0.95",
+                    details={"threat_score": 0.82},
+                ),
+                StageResult(
+                    scanner="MLModelScanner",
+                    verdict="clean",
+                    malicious_probability=0.05,
+                    clean_probability=0.95,
+                    reason="ML model: high confidence clean",
+                ),
+            ]
+        )
+
+        self.assertEqual(decision.final_verdict, "malicious")
+        self.assertGreaterEqual(decision.risk_score, RiskAggregator.MALICIOUS_THRESHOLD)
+
+    def test_high_url_ml_probability_is_strong_local_evidence(self):
+        decision = RiskAggregator().aggregate(
+            [
+                StageResult(
+                    scanner="MLModelScanner",
+                    verdict="unknown",
+                    malicious_probability=0.91,
+                    clean_probability=0.09,
+                    reason="ML model uncertain but high confidence",
+                ),
+                StageResult(
+                    scanner="HtmlScraper",
+                    verdict="clean",
+                    risk_score=0.0,
+                    reason="DOM structure appears normal",
+                    details={"threat_score": 0.0},
                 ),
             ]
         )

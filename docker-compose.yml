@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./apps/backend
+    image: phishcatch-backend:local
+    ports:
+      - "8001:8000"
+    environment:
+      PORT: "8000"
+      CORS_ALLOWED_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      HTML_BROWSER_RENDER_ENABLED: "0"
+      SCANNER_CACHE_ENABLED: "1"
+      SCANNER_CACHE_TTL_SECONDS: "900"
+
+  frontend:
+    build:
+      context: ./apps/flutter_app
+    image: phishcatch-frontend:local
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend

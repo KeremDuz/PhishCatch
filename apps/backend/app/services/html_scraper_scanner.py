@@ -1,11 +1,18 @@
 import re
+from pathlib import Path
+
+import joblib
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
+from app.ml.html_feature_extractor import extract_html_features_dataframe
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
+from app.services.browser_renderer import BrowserRenderResult, render_page
 from app.services.url_safety import validate_public_http_url
+from app.services.url_heuristic_scanner import BRAND_TERMS, FREE_HOSTING_SUFFIXES, LEGITIMATE_BRAND_HOSTS
+from app.utils.url_utils import hostname_matches_allowed
 
 
 # ─── Hacker'ın çalmak istediği veri türleri ve bunları yakalayan kalıplar ───
@@ -355,9 +362,20 @@ def _scan_iframes(soup: BeautifulSoup, base_domain: str) -> list:
 
 
 class HtmlScraperScanner(BaseScanner):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        model_path: str | None = None,
+        browser_render_enabled: bool = False,
+        browser_timeout_ms: int = 7000,
+        browser_screenshot_enabled: bool = False,
+    ) -> None:
         super().__init__(name="HtmlScraper")
         self.max_redirects = 5
+        self.model_path = model_path
+        self.model = self._load_model(model_path)
+        self.browser_render_enabled = browser_render_enabled
+        self.browser_timeout_ms = browser_timeout_ms
+        self.browser_screenshot_enabled = browser_screenshot_enabled
 
     def scan(self, url: str) -> StageResult:
         try:
@@ -386,11 +404,19 @@ class HtmlScraperScanner(BaseScanner):
 
             raw_html = html_bytes.decode("utf-8", errors="ignore")
             soup = BeautifulSoup(raw_html, "lxml")
+            browser_render = self._maybe_render_html(final_url, raw_html, soup)
+            if browser_render.available and browser_render.html:
+                raw_html = browser_render.html
+                final_url = browser_render.final_url or final_url
+                parsed_url = urlparse(final_url)
+                base_domain = parsed_url.netloc
+                soup = BeautifulSoup(raw_html, "lxml")
 
             # ── Analiz ──
             input_findings = _scan_inputs(soup)
             js_threats = _scan_js_threats(soup, raw_html)
             external_iframes = _scan_iframes(soup, base_domain)
+            html_model_result = self._predict_html_model(final_url, raw_html)
 
             # Form action analizi
             forms = soup.find_all("form")
@@ -406,6 +432,7 @@ class HtmlScraperScanner(BaseScanner):
                         external_actions += 1
 
             title = soup.title.string.strip() if soup.title and soup.title.string else None
+            visual_brand_signals = self._scan_visual_brand_signals(soup, final_url, input_findings)
 
             # ── Tehdit puanı hesapla ──
             threat_score = 0.0
@@ -527,8 +554,17 @@ class HtmlScraperScanner(BaseScanner):
                 threat_score += 0.1
                 reasons.append(f"contenteditable elements with sensitive inputs")
 
+            for signal in visual_brand_signals:
+                threat_score += float(signal["score"])
+                reasons.append(str(signal["reason"]))
+
             # ── Karar ──
-            threat_score = min(threat_score, 1.0)
+            rule_threat_score = min(threat_score, 1.0)
+            threat_score = self._combine_rule_and_model_scores(rule_threat_score, html_model_result)
+            if html_model_result.get("available") and html_model_result.get("model_risk_score", 0.0) >= 0.3:
+                reasons.append(
+                    f"HTML model phishing probability {html_model_result['malicious_probability']}"
+                )
 
             # Aktif input sayısı (non-empty categories)
             active_categories = sum(
@@ -541,7 +577,11 @@ class HtmlScraperScanner(BaseScanner):
                 "total_forms": len(forms),
                 "external_form_actions": external_actions,
                 "abnormal_form_actions": abnormal_actions,
+                "rule_threat_score": round(rule_threat_score, 3),
                 "threat_score": round(threat_score, 3),
+                "html_model": html_model_result,
+                "browser_render": browser_render.as_dict(),
+                "visual_brand_signals": visual_brand_signals,
                 "active_threat_categories": active_categories,
                 "input_summary": {
                     k: len(v) for k, v in input_findings.items()
@@ -564,6 +604,8 @@ class HtmlScraperScanner(BaseScanner):
                     verdict="malicious",
                     confidence=round(threat_score, 4),
                     risk_score=round(threat_score, 4),
+                    malicious_probability=html_model_result.get("malicious_probability"),
+                    clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
                 )
@@ -573,6 +615,8 @@ class HtmlScraperScanner(BaseScanner):
                     verdict="unknown",
                     confidence=round(threat_score, 4),
                     risk_score=round(threat_score, 4),
+                    malicious_probability=html_model_result.get("malicious_probability"),
+                    clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
                 )
@@ -581,6 +625,8 @@ class HtmlScraperScanner(BaseScanner):
                     scanner=self.name,
                     verdict="clean",
                     risk_score=round(threat_score, 4),
+                    malicious_probability=html_model_result.get("malicious_probability"),
+                    clean_probability=html_model_result.get("clean_probability"),
                     reason="DOM structure appears normal",
                     details=details,
                 )
@@ -593,6 +639,139 @@ class HtmlScraperScanner(BaseScanner):
                 reason="Failed to scrape HTML content",
                 details={"error": str(e)},
             )
+
+    def _maybe_render_html(self, final_url: str, raw_html: str, soup: BeautifulSoup) -> BrowserRenderResult:
+        if not self.browser_render_enabled:
+            return BrowserRenderResult(available=False, final_url=final_url, reason="Browser render disabled")
+
+        if not self._should_try_browser_render(raw_html, soup):
+            return BrowserRenderResult(available=False, final_url=final_url, reason="Static HTML was sufficient")
+
+        rendered = render_page(
+            final_url,
+            timeout_ms=self.browser_timeout_ms,
+            screenshot=self.browser_screenshot_enabled,
+        )
+        if rendered.available and len(rendered.html) <= len(raw_html) and not rendered.visible_text:
+            return BrowserRenderResult(
+                available=False,
+                final_url=rendered.final_url or final_url,
+                reason="Browser render did not reveal additional content",
+                error=rendered.error,
+            )
+        return rendered
+
+    @staticmethod
+    def _should_try_browser_render(raw_html: str, soup: BeautifulSoup) -> bool:
+        text = soup.get_text(" ", strip=True)
+        scripts = soup.find_all("script")
+        inputs = soup.find_all("input")
+        forms = soup.find_all("form")
+        html_lower = raw_html.lower()
+        has_app_shell = bool(soup.select("#root, #app, app-root, main-app, [data-reactroot]"))
+        asks_for_javascript = "enable javascript" in html_lower or "requires javascript" in html_lower
+        sparse_shell = len(raw_html) < 3500 and len(text) < 500 and (scripts or has_app_shell)
+        script_heavy_without_forms = len(scripts) >= 5 and not inputs and not forms and len(text) < 1200
+        return asks_for_javascript or sparse_shell or script_heavy_without_forms
+
+    def _scan_visual_brand_signals(
+        self,
+        soup: BeautifulSoup,
+        final_url: str,
+        input_findings: dict,
+    ) -> list[dict[str, object]]:
+        parsed = urlparse(final_url)
+        hostname = (parsed.hostname or "").lower().strip(".")
+        visual_text = self._extract_visual_text(soup)
+        visual_haystack = visual_text.lower()
+        brand_hits = sorted(brand for brand in BRAND_TERMS if brand in visual_haystack)
+        logo_hits = self._brand_asset_hits(soup)
+        if not brand_hits and not logo_hits:
+            return []
+
+        credential_count = len(input_findings.get("credentials", []))
+        sensitive_count = sum(
+            len(input_findings.get(category, []))
+            for category in ("credit_card", "cvv", "banking", "pin_otp", "identity", "crypto")
+        )
+        auth_context = credential_count > 0 or sensitive_count > 0 or bool(
+            re.search(r"\b(sign in|signin|login|verify|password|wallet|account|security|support)\b", visual_haystack)
+        )
+        is_hosted = self._endswith_any(hostname, FREE_HOSTING_SUFFIXES)
+
+        signals: list[dict[str, object]] = []
+        suspicious_brands = [
+            brand for brand in brand_hits if not self._is_legitimate_brand_host(hostname, brand)
+        ]
+        if suspicious_brands and auth_context:
+            score = 0.45 if credential_count or sensitive_count else 0.32
+            if is_hosted:
+                score += 0.08
+            signals.append(
+                {
+                    "rule": "visual_brand_mismatch",
+                    "score": min(score, 0.6),
+                    "brands": suspicious_brands[:5],
+                    "reason": f"Page visually references brand(s) on unrelated host: {', '.join(suspicious_brands[:3])}",
+                }
+            )
+
+        suspicious_logo_hits = [
+            brand for brand in logo_hits if not self._is_legitimate_brand_host(hostname, brand)
+        ]
+        if suspicious_logo_hits:
+            signals.append(
+                {
+                    "rule": "brand_logo_asset_mismatch",
+                    "score": 0.28 if auth_context else 0.18,
+                    "brands": suspicious_logo_hits[:5],
+                    "reason": f"Logo/favicon asset references brand(s) on unrelated host: {', '.join(suspicious_logo_hits[:3])}",
+                }
+            )
+
+        return sorted(signals, key=lambda item: float(item["score"]), reverse=True)
+
+    @staticmethod
+    def _extract_visual_text(soup: BeautifulSoup) -> str:
+        chunks: list[str] = []
+        if soup.title and soup.title.string:
+            chunks.append(soup.title.string)
+        for tag_name in ("h1", "h2", "h3", "button", "label", "a", "span", "p"):
+            for tag in soup.find_all(tag_name, limit=40):
+                text = tag.get_text(" ", strip=True)
+                if text:
+                    chunks.append(text)
+        for tag in soup.find_all(["img", "input"], limit=80):
+            for attribute in ("alt", "aria-label", "placeholder", "value", "name", "id", "class", "src"):
+                value = tag.get(attribute)
+                if isinstance(value, list):
+                    value = " ".join(str(item) for item in value)
+                if value:
+                    chunks.append(str(value))
+        return " ".join(chunks)[:20000]
+
+    @staticmethod
+    def _brand_asset_hits(soup: BeautifulSoup) -> list[str]:
+        values: list[str] = []
+        for tag in soup.find_all(["img", "link"], limit=80):
+            rel = " ".join(tag.get("rel", []) if isinstance(tag.get("rel"), list) else [str(tag.get("rel") or "")])
+            if tag.name == "link" and "icon" not in rel.lower():
+                continue
+            for attribute in ("src", "href", "alt"):
+                value = tag.get(attribute)
+                if value:
+                    values.append(str(value).lower())
+        haystack = " ".join(values)
+        return sorted(brand for brand in BRAND_TERMS if brand in haystack)
+
+    @staticmethod
+    def _is_legitimate_brand_host(hostname: str, brand: str) -> bool:
+        allowed_hosts = LEGITIMATE_BRAND_HOSTS.get(brand, set())
+        return hostname_matches_allowed(hostname, allowed_hosts)
+
+    @staticmethod
+    def _endswith_any(hostname: str, suffixes: tuple[str, ...]) -> bool:
+        return any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes)
 
     def _safe_get(self, url: str, headers: dict[str, str]) -> tuple[requests.Response, str, list[dict]]:
         current_url = url
@@ -629,3 +808,60 @@ class HtmlScraperScanner(BaseScanner):
             current_url = next_url
 
         raise ValueError("Maximum redirect depth exceeded")
+
+    @staticmethod
+    def _load_model(model_path: str | None):
+        if not model_path:
+            return None
+
+        path = Path(model_path)
+        if not path.exists():
+            return None
+
+        try:
+            return joblib.load(path)
+        except Exception:
+            return None
+
+    def _predict_html_model(self, final_url: str, raw_html: str) -> dict[str, object]:
+        if self.model is None:
+            return {
+                "available": False,
+                "model_path": self.model_path,
+                "reason": "HTML model unavailable",
+            }
+
+        try:
+            features = extract_html_features_dataframe(url=final_url, raw_html=raw_html, final_url=final_url)
+            probability = float(self.model.predict_proba(features)[0][1])
+            model_risk_score = self._model_probability_to_risk(probability)
+            return {
+                "available": True,
+                "model_path": self.model_path,
+                "malicious_probability": round(probability, 4),
+                "clean_probability": round(1 - probability, 4),
+                "model_risk_score": round(model_risk_score, 4),
+                "feature_count": int(features.shape[1]),
+            }
+        except Exception as exc:
+            return {
+                "available": False,
+                "model_path": self.model_path,
+                "reason": "HTML model prediction failed",
+                "error": str(exc),
+            }
+
+    @staticmethod
+    def _model_probability_to_risk(probability: float) -> float:
+        if probability < 0.5:
+            return 0.0
+        if probability >= 0.8:
+            return min(0.88, 0.75 + ((probability - 0.8) * 0.5))
+        return min(0.88, 0.25 + ((probability - 0.5) * 1.26))
+
+    @staticmethod
+    def _combine_rule_and_model_scores(rule_score: float, html_model_result: dict[str, object]) -> float:
+        model_risk_score = float(html_model_result.get("model_risk_score") or 0.0)
+        if model_risk_score <= 0:
+            return min(rule_score, 1.0)
+        return min(1.0, 1 - ((1 - rule_score) * (1 - model_risk_score)))

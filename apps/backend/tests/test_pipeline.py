@@ -1,5 +1,6 @@
 import unittest
 
+from app.core.scan_cache import ScannerResultCache
 from app.core.pipeline import ScanningPipeline
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
@@ -93,6 +94,53 @@ class ScanningPipelineTests(unittest.TestCase):
         self.assertEqual(external.seen_urls, [])
         self.assertTrue(response.stages[1].details["skipped"])
         self.assertEqual(response.final_verdict, "malicious")
+
+    def test_reuses_cached_scanner_result(self):
+        scanner = StubScanner(
+            "URLHeuristicScanner",
+            StageResult(scanner="URLHeuristicScanner", verdict="clean", risk_score=0.0),
+        )
+        pipeline = ScanningPipeline(
+            [scanner],
+            scan_cache=ScannerResultCache(ttl_seconds=60),
+        )
+
+        first = pipeline.run("https://example.com")
+        second = pipeline.run("https://example.com")
+
+        self.assertEqual(scanner.seen_urls, ["https://example.com"])
+        self.assertFalse(first.stages[0].details.get("cache", {}).get("hit", False))
+        self.assertTrue(second.stages[0].details["cache"]["hit"])
+
+    def test_skips_html_scan_after_confident_clean_prior_signals(self):
+        heuristic = StubScanner(
+            "URLHeuristicScanner",
+            StageResult(scanner="URLHeuristicScanner", verdict="clean", risk_score=0.0),
+        )
+        ml = StubScanner(
+            "MLModelScanner",
+            StageResult(
+                scanner="MLModelScanner",
+                verdict="clean",
+                malicious_probability=0.02,
+                clean_probability=0.98,
+                details={"decision": "confident_clean"},
+            ),
+        )
+        html = StubScanner(
+            "HtmlScraper",
+            StageResult(scanner="HtmlScraper", verdict="malicious", risk_score=0.9),
+        )
+
+        response = ScanningPipeline(
+            [heuristic, ml, html],
+            skip_html_on_confident_clean=True,
+        ).run("https://example.com")
+
+        self.assertEqual(html.seen_urls, [])
+        self.assertTrue(response.stages[2].details["skipped"])
+        self.assertEqual(response.stages[2].details["skip_reason"], "confident_clean_prior_signals")
+        self.assertEqual(response.final_verdict, "clean")
 
 
 if __name__ == "__main__":

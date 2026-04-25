@@ -12,7 +12,9 @@ echo "== Backend compile =="
 "$PYTHON_BIN" -m compileall -q \
   "$ROOT_DIR/apps/backend/app" \
   "$ROOT_DIR/apps/backend/feature_extractor.py" \
+  "$ROOT_DIR/apps/backend/train_html_model.py" \
   "$ROOT_DIR/apps/backend/train_model.py" \
+  "$ROOT_DIR/apps/backend/scripts/analyze_feed.py" \
   "$ROOT_DIR/apps/backend/scripts/smoke_test_fastapi.py"
 
 echo "== Backend tests =="

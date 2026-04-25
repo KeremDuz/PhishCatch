@@ -1,7 +1,9 @@
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, model_validator
+
+from app.utils.url_utils import canonicalize_url, ensure_http_url
 
 
 Verdict = Literal["malicious", "clean", "unknown"]
@@ -23,10 +25,10 @@ class AnalyzeUrlRequest(BaseModel):
 
         original_input = candidate
 
-        if not candidate.startswith(("http://", "https://")):
-            candidate = f"https://{candidate}"
+        candidate = ensure_http_url(candidate)
+        candidate = canonicalize_url(candidate)
 
-        parsed = urlparse(candidate)
+        parsed = urlsplit(candidate)
         if not parsed.netloc:
             raise ValueError("Input should be a valid URL")
 

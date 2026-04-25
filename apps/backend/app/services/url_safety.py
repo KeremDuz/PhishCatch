@@ -5,6 +5,8 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 
+from app.utils.url_utils import parse_url_parts
+
 
 @dataclass(frozen=True)
 class UrlSafetyResult:
@@ -37,7 +39,11 @@ def validate_public_http_url(url: str) -> UrlSafetyResult:
             details={"hostname": parsed.hostname},
         )
 
-    hostname = parsed.hostname.strip().lower()
+    try:
+        url_parts = parse_url_parts(url)
+        hostname = url_parts.ascii_hostname
+    except Exception:
+        hostname = parsed.hostname.strip().lower()
     if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
         return UrlSafetyResult(
             is_safe=False,

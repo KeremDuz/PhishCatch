@@ -6,7 +6,7 @@ from typing import Literal
 from app.models.schemas import StageResult
 
 
-FinalVerdict = Literal["malicious", "clean"]
+FinalVerdict = Literal["malicious", "clean", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -35,9 +35,10 @@ class RiskDecision:
 
 
 class RiskAggregator:
-    """Combines scanner evidence into the public binary phishing/clean verdict."""
+    """Combines scanner evidence into the public phishing/clean/unknown verdict."""
 
-    MALICIOUS_THRESHOLD = 0.65
+    MALICIOUS_THRESHOLD = 0.6
+    UNKNOWN_THRESHOLD = 0.35
     THREAT_INTEL_SCANNERS = {
         "URLhausScanner",
         "GoogleSafeBrowsing",
@@ -56,10 +57,15 @@ class RiskAggregator:
                 negative.append(stage_negative)
 
         positive_risk = self._noisy_or(evidence.score for evidence in positive)
-        negative_offset = min(0.45, sum(evidence.score for evidence in negative))
+        negative_offset = self._negative_offset(positive, negative)
         risk_score = self._clamp(positive_risk - negative_offset)
 
-        final_verdict: FinalVerdict = "malicious" if risk_score >= self.MALICIOUS_THRESHOLD else "clean"
+        if risk_score >= self.MALICIOUS_THRESHOLD:
+            final_verdict: FinalVerdict = "malicious"
+        elif positive and risk_score >= self.UNKNOWN_THRESHOLD:
+            final_verdict = "unknown"
+        else:
+            final_verdict = "clean"
         confidence = self._confidence(final_verdict, risk_score)
 
         strongest_positive = max(positive, key=lambda item: item.score, default=None)
@@ -75,6 +81,7 @@ class RiskAggregator:
             summary=summary,
             signals={
                 "malicious_threshold": self.MALICIOUS_THRESHOLD,
+                "unknown_threshold": self.UNKNOWN_THRESHOLD,
                 "positive": [evidence.as_dict() for evidence in sorted(positive, key=lambda item: item.score, reverse=True)],
                 "negative": [evidence.as_dict() for evidence in sorted(negative, key=lambda item: item.score, reverse=True)],
             },
@@ -147,8 +154,12 @@ class RiskAggregator:
         if probability >= 0.5:
             if probability >= 0.95:
                 score = min(0.92, 0.85 + ((probability - 0.95) * 1.4))
+            elif probability >= 0.9:
+                score = min(0.84, 0.78 + ((probability - 0.9) * 1.2))
+            elif probability >= 0.85:
+                score = min(0.78, 0.72 + ((probability - 0.85) * 1.2))
             elif probability >= 0.8:
-                score = 0.5 + ((probability - 0.8) * 0.7)
+                score = 0.62 + ((probability - 0.8) * 2.0)
             else:
                 score = 0.25 + ((probability - 0.5) * 0.8)
             return RiskEvidence(stage.scanner, score, reason), None
@@ -171,6 +182,41 @@ class RiskAggregator:
 
         return None, RiskEvidence(stage.scanner, 0.1, reason)
 
+    def _negative_offset(self, positive: list[RiskEvidence], negative: list[RiskEvidence]) -> float:
+        raw_offset = min(0.45, sum(evidence.score for evidence in negative))
+        if raw_offset <= 0:
+            return 0.0
+
+        has_threat_intel_hit = any(
+            evidence.scanner in self.THREAT_INTEL_SCANNERS and evidence.score >= 0.75
+            for evidence in positive
+        )
+        if has_threat_intel_hit:
+            return 0.0
+
+        has_strong_local_hit = any(
+            evidence.scanner in {"HtmlScraper", "MLModelScanner", "URLHeuristicScanner"} and evidence.score >= 0.6
+            for evidence in positive
+        )
+        if has_strong_local_hit:
+            return min(0.05, raw_offset)
+
+        has_moderate_non_resolver_hit = any(
+            evidence.scanner != "UrlResolver" and evidence.score >= 0.4
+            for evidence in positive
+        )
+        if has_moderate_non_resolver_hit:
+            return min(0.04, raw_offset)
+
+        has_multiple_local_hits = (
+            len([evidence for evidence in positive if evidence.scanner != "UrlResolver"]) >= 2
+            and max((evidence.score for evidence in positive), default=0.0) >= 0.35
+        )
+        if has_multiple_local_hits:
+            return min(0.04, raw_offset)
+
+        return raw_offset
+
     @staticmethod
     def _noisy_or(scores) -> float:
         safe_product = 1.0
@@ -186,8 +232,13 @@ class RiskAggregator:
     def _confidence(cls, final_verdict: FinalVerdict, risk_score: float) -> float:
         if final_verdict == "malicious":
             distance = (risk_score - cls.MALICIOUS_THRESHOLD) / (1 - cls.MALICIOUS_THRESHOLD)
+        elif final_verdict == "unknown":
+            band_width = cls.MALICIOUS_THRESHOLD - cls.UNKNOWN_THRESHOLD
+            midpoint = cls.UNKNOWN_THRESHOLD + (band_width / 2)
+            distance = 1 - (abs(risk_score - midpoint) / max(band_width / 2, 0.01))
+            return cls._clamp(0.55 + (distance * 0.15))
         else:
-            distance = (cls.MALICIOUS_THRESHOLD - risk_score) / cls.MALICIOUS_THRESHOLD
+            distance = (cls.UNKNOWN_THRESHOLD - risk_score) / cls.UNKNOWN_THRESHOLD
 
         return cls._clamp(0.5 + (distance * 0.5))
 
@@ -202,6 +253,11 @@ class RiskAggregator:
             if strongest_positive:
                 return f"Phishing risk is high: {strongest_positive.reason}"
             return "Phishing risk is high based on combined scanner signals."
+
+        if final_verdict == "unknown":
+            if strongest_positive:
+                return f"Suspicious phishing signals found: {strongest_positive.reason}"
+            return "Suspicious phishing signals found; result needs review."
 
         if strongest_negative and risk_score < 0.25:
             return f"No strong phishing signal found: {strongest_negative.reason}"

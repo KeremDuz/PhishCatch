@@ -39,6 +39,29 @@ source ../../.venv/bin/activate
 uvicorn app.main:app --reload --port 8001
 ```
 
+## Docker
+
+Backend ve Flutter web birlikte:
+
+```bash
+cd /home/keremduz/Phishing_detection_system
+PHISHCATCH_API_BASE_URL=http://localhost:8001 scripts/build_flutter_web.sh
+docker compose up --build
+```
+
+- Frontend: `http://localhost:8080`
+- Backend health: `http://localhost:8001/health`
+
+Tekil imajlar:
+
+```bash
+docker build -t phishcatch-backend:local apps/backend
+PHISHCATCH_API_BASE_URL=http://localhost:8001 scripts/build_flutter_web.sh
+docker build -t phishcatch-frontend:local apps/flutter_app
+```
+
+Azure Container Apps deploy adımları için: `apps/backend/DEPLOY_AZURE.md`.
+
 ## Hızlı Kontrol
 
 Bu smoke test gerçek internet çağrısı veya model tahmini yapmaz; sadece FastAPI app import, route ve health fonksiyonunu kontrol eder.
