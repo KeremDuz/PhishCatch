@@ -33,3 +33,10 @@ apps/backend/model_benchmark_summary.csv
 
 # Local scratch/test input files
 apps/backend/feed1.txt
+
+# Flutter / Android local build and signing artifacts
+apps/flutter_app/.dart_tool/
+apps/flutter_app/build/
+apps/flutter_app/android/key.properties
+apps/flutter_app/android/*.jks
+apps/flutter_app/android/*.keystore
