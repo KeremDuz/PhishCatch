@@ -3,6 +3,63 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
+class CyberBackdrop extends StatelessWidget {
+  final Widget child;
+  final bool dense;
+
+  const CyberBackdrop({super.key, required this.child, this.dense = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(gradient: AppColors.bgGradient),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Align(
+            alignment: dense ? Alignment.topLeft : Alignment.topCenter,
+            child: FractionallySizedBox(
+              widthFactor: dense ? 1.0 : 0.7,
+              heightFactor: 0.32,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      AppColors.electric.withValues(alpha: 0.10),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: AppColors.electric.withValues(alpha: 0.45),
+                      width: 2,
+                    ),
+                    right: BorderSide(
+                      color: AppColors.accent.withValues(alpha: 0.32),
+                      width: 2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
 /// Glassmorphism container widget
 class GlassCard extends StatelessWidget {
   final Widget child;
@@ -18,7 +75,7 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding,
     this.margin,
-    this.borderRadius = 20,
+    this.borderRadius = 8,
     this.borderColor,
     this.width,
     this.height,
@@ -29,12 +86,18 @@ class GlassCard extends StatelessWidget {
     // Web'de BackdropFilter aşırı FPS düşüşüne neden olur.
     // Görüntüyü aynı tutmak için Web tarafında blur yerine yarı saydam bir arka plan kullanıyoruz.
     final decoration = BoxDecoration(
-      color: kIsWeb ? AppColors.bgCard.withValues(alpha: 0.95) : AppColors.glassWhite,
+      color: kIsWeb
+          ? AppColors.bgCard.withValues(alpha: 0.94)
+          : AppColors.glassWhite,
       borderRadius: BorderRadius.circular(borderRadius),
-      border: Border.all(
-        color: borderColor ?? AppColors.glassBorder,
-        width: 1,
-      ),
+      border: Border.all(color: borderColor ?? AppColors.glassBorder, width: 1),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.26),
+          blurRadius: 24,
+          offset: const Offset(0, 16),
+        ),
+      ],
     );
 
     final content = Container(
@@ -126,11 +189,7 @@ class PulsatingDot extends StatefulWidget {
   final Color color;
   final double size;
 
-  const PulsatingDot({
-    super.key,
-    this.color = AppColors.safe,
-    this.size = 10,
-  });
+  const PulsatingDot({super.key, this.color = AppColors.safe, this.size = 10});
 
   @override
   State<PulsatingDot> createState() => _PulsatingDotState();
@@ -148,9 +207,10 @@ class _PulsatingDotState extends State<PulsatingDot>
       duration: const Duration(milliseconds: 1500),
       vsync: this,
     )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _animation = Tween<double>(
+      begin: 0.4,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
@@ -189,11 +249,7 @@ class VerdictShield extends StatelessWidget {
   final String verdict;
   final double size;
 
-  const VerdictShield({
-    super.key,
-    required this.verdict,
-    this.size = 80,
-  });
+  const VerdictShield({super.key, required this.verdict, this.size = 80});
 
   Color get _color {
     switch (verdict) {
@@ -230,11 +286,7 @@ class VerdictShield extends StatelessWidget {
           ),
         ],
       ),
-      child: Icon(
-        _icon,
-        size: size,
-        color: _color,
-      ),
+      child: Icon(_icon, size: size, color: _color),
     );
   }
 }

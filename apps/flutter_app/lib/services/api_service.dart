@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -35,7 +36,8 @@ class AnalysisResult {
       maliciousProbability: (json['malicious_probability'] as num?)?.toDouble(),
       cleanProbability: (json['clean_probability'] as num?)?.toDouble(),
       decidedBy: json['decided_by'] ?? '',
-      stages: (json['stages'] as List<dynamic>?)
+      stages:
+          (json['stages'] as List<dynamic>?)
               ?.map((s) => StageResult.fromJson(s))
               .toList() ??
           [],
@@ -84,8 +86,9 @@ class StageResult {
 }
 
 class PhishCatchApiService {
-  static const String _configuredBaseUrl =
-      String.fromEnvironment('PHISHCATCH_API_BASE_URL');
+  static const String _configuredBaseUrl = String.fromEnvironment(
+    'PHISHCATCH_API_BASE_URL',
+  );
   static const String _productionBaseUrl =
       'https://phishcatch-p4jc.onrender.com';
 
@@ -112,20 +115,28 @@ class PhishCatchApiService {
   static Future<AnalysisResult> analyzeUrl(String url) async {
     final uri = Uri.parse('$_baseUrl/api/v1/analyze');
 
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'url': url}),
-    );
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'url': url}),
+          )
+          .timeout(const Duration(seconds: 45));
 
-    if (response.statusCode == 200) {
-      return AnalysisResult.fromJson(jsonDecode(response.body));
-    } else if (response.statusCode == 422) {
-      final detail = jsonDecode(response.body);
-      final msg = detail['detail']?[0]?['msg'] ?? 'Invalid URL';
-      throw Exception(msg);
-    } else {
-      throw Exception('Server error: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        return AnalysisResult.fromJson(jsonDecode(response.body));
+      } else if (response.statusCode == 422) {
+        final detail = jsonDecode(response.body);
+        final msg = detail['detail']?[0]?['msg'] ?? 'Invalid URL';
+        throw Exception(msg);
+      } else {
+        throw Exception('Server error: ${response.statusCode}');
+      }
+    } on TimeoutException {
+      throw Exception('Sunucu zamaninda cevap vermedi. Backend calisiyor mu?');
+    } on http.ClientException {
+      throw Exception('Backend baglantisi kurulamadi. Backend acik mi?');
     }
   }
 }

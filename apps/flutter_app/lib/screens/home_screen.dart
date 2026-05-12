@@ -1,6 +1,3 @@
-import 'dart:math' as math;
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
-import 'qr_scanner_screen.dart';
 import 'result_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -18,38 +14,35 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Web'de sürekli animasyon = kasma. Sadece mobilde kullan.
-  AnimationController? _bgAnimController;
-
   @override
   void initState() {
     super.initState();
-    if (!kIsWeb) {
-      _bgAnimController = AnimationController(
-        duration: const Duration(seconds: 8),
-        vsync: this,
-      )..repeat();
-    }
+    _urlFocusNode.addListener(_handleFocusChanged);
   }
 
   @override
   void dispose() {
+    _urlFocusNode.removeListener(_handleFocusChanged);
     _urlController.dispose();
     _urlFocusNode.dispose();
-    _bgAnimController?.dispose();
     super.dispose();
+  }
+
+  void _handleFocusChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _analyzeUrl(String url) async {
     if (url.trim().isEmpty) {
-      setState(() => _errorMessage = 'Please enter a URL');
+      setState(() => _errorMessage = 'Lutfen bir baglanti gir.');
       return;
     }
 
@@ -70,18 +63,18 @@ class _HomeScreenState extends State<HomeScreen>
             return FadeTransition(
               opacity: animation,
               child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0, 0.05),
-                  end: Offset.zero,
-                ).animate(CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeOut,
-                )),
+                position:
+                    Tween<Offset>(
+                      begin: const Offset(0, 0.04),
+                      end: Offset.zero,
+                    ).animate(
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                    ),
                 child: child,
               ),
             );
           },
-          transitionDuration: const Duration(milliseconds: 400),
+          transitionDuration: const Duration(milliseconds: 280),
         ),
       );
     } catch (e) {
@@ -93,70 +86,116 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _openQrScanner() async {
-    final scannedUrl = await Navigator.of(context).push<String>(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const QrScannerScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
-    );
-
-    if (scannedUrl != null && scannedUrl.isNotEmpty && mounted) {
-      _urlController.text = scannedUrl;
-      _analyzeUrl(scannedUrl);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isWide = size.width > 700;
-
     return Scaffold(
       backgroundColor: AppColors.bgDark,
-      body: Stack(
-        children: [
-          // Background — web'de statik, mobilde animasyonlu
-          _buildBackground(size),
-
-          // Main content
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isWide ? size.width * 0.15 : 24,
-                  vertical: 24,
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 600),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildLogo(),
-                      const SizedBox(height: 12),
-                      _buildTitle(),
-                      const SizedBox(height: 8),
-                      _buildSubtitle(),
-                      const SizedBox(height: 48),
-                      _buildUrlInput(),
-                      const SizedBox(height: 16),
-                      _buildActionButtons(),
-                      if (_errorMessage != null) ...[
-                        const SizedBox(height: 16),
-                        _buildErrorMessage(),
+      body: CyberBackdrop(
+        dense: MediaQuery.of(context).size.width < 720,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 720;
+              return Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isWide ? 48 : 22,
+                    vertical: 28,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildIdentity(isWide),
+                        SizedBox(height: isWide ? 50 : 38),
+                        _buildCommandSurface(isWide),
+                        if (_errorMessage != null) ...[
+                          const SizedBox(height: 14),
+                          _buildErrorMessage(),
+                        ],
                       ],
-                      const SizedBox(height: 48),
-                      _buildFeatureCards(isWide),
-                      const SizedBox(height: 32),
-                      _buildFooter(),
-                    ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIdentity(bool isWide) {
+    return Column(
+          children: [
+            _buildLogo(isWide),
+            const SizedBox(height: 22),
+            GradientText(
+              text: 'PhishCatch',
+              style: GoogleFonts.inter(
+                fontSize: isWide ? 64 : 42,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+                height: 0.92,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              width: isWide ? 180 : 126,
+              height: 3,
+              decoration: const BoxDecoration(
+                gradient: AppColors.primaryGradient,
+              ),
+            ),
+          ],
+        )
+        .animate()
+        .fadeIn(duration: 320.ms)
+        .slideY(begin: 0.05, duration: 420.ms, curve: Curves.easeOutCubic);
+  }
+
+  Widget _buildLogo(bool isWide) {
+    final size = isWide ? 94.0 : 78.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: AppColors.primaryGradient,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.electric.withValues(alpha: 0.28),
+                    blurRadius: 34,
+                    offset: const Offset(0, 16),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.bgSurface.withValues(alpha: 0.38),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.18),
                   ),
                 ),
               ),
+            ),
+          ),
+          Center(
+            child: Icon(
+              Icons.shield_rounded,
+              color: Colors.white,
+              size: isWide ? 46 : 38,
             ),
           ),
         ],
@@ -164,364 +203,158 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildBackground(Size size) {
-    // Orb widget'ları bir kere oluştur
-    final orb1 = RepaintBoundary(
-      child: Container(
-        width: 350,
-        height: 350,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [
-              AppColors.primary.withValues(alpha: 0.12),
-              Colors.transparent,
-            ],
-          ),
-        ),
-      ),
-    );
+  Widget _buildCommandSurface(bool isWide) {
+    final borderColor = _urlFocusNode.hasFocus
+        ? AppColors.electric
+        : Colors.white.withValues(alpha: 0.16);
 
-    final orb2 = RepaintBoundary(
-      child: Container(
-        width: 400,
-        height: 400,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [
-              AppColors.accent.withValues(alpha: 0.08),
-              Colors.transparent,
-            ],
-          ),
-        ),
-      ),
-    );
-
-    final centerGlow = Container(
-      width: 200,
-      height: 200,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            AppColors.primary.withValues(alpha: 0.05),
-            Colors.transparent,
-          ],
-        ),
-      ),
-    );
-
-    // Web'de animasyon yok — statik pozisyonlarda dur
-    if (kIsWeb) {
-      return Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(top: -100, right: -80, child: orb1),
-          Positioned(bottom: -120, left: -100, child: orb2),
-          Positioned(
-            top: size.height * 0.3,
-            left: size.width * 0.3,
-            child: centerGlow,
-          ),
-        ],
-      );
-    }
-
-    // Mobilde hafif animasyon
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Positioned(
-          top: size.height * 0.3,
-          left: size.width * 0.3,
-          child: centerGlow,
-        ),
-        AnimatedBuilder(
-          animation: _bgAnimController!,
-          builder: (context, child) {
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned(
-                  top: -100,
-                  right: -80,
-                  child: Transform.translate(
-                    offset: Offset(
-                      math.cos(_bgAnimController!.value * 2 * math.pi) * 20,
-                      math.sin(_bgAnimController!.value * 2 * math.pi) * 30,
-                    ),
-                    child: orb1,
-                  ),
-                ),
-                Positioned(
-                  bottom: -120,
-                  left: -100,
-                  child: Transform.translate(
-                    offset: Offset(
-                      math.sin(_bgAnimController!.value * 2 * math.pi) * 15,
-                      math.cos(_bgAnimController!.value * 2 * math.pi) * 25,
-                    ),
-                    child: orb2,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLogo() {
     return Container(
-      width: 80,
-      height: 80,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: AppColors.primaryGradient,
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.4),
-            blurRadius: 30,
-            spreadRadius: 5,
+          decoration: BoxDecoration(
+            color: AppColors.bgSurface.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.34),
+                blurRadius: 34,
+                offset: const Offset(0, 22),
+              ),
+              if (_urlFocusNode.hasFocus)
+                BoxShadow(
+                  color: AppColors.electric.withValues(alpha: 0.14),
+                  blurRadius: 34,
+                ),
+            ],
           ),
-        ],
-      ),
-      child: const Icon(
-        Icons.shield_rounded,
-        size: 42,
-        color: Colors.white,
-      ),
-    )
+          child: isWide
+              ? Row(
+                  children: [
+                    Expanded(child: _buildUrlInput()),
+                    _buildDivider(vertical: true),
+                    SizedBox(width: 190, child: _buildActionButton()),
+                  ],
+                )
+              : Column(
+                  children: [
+                    _buildUrlInput(),
+                    _buildDivider(vertical: false),
+                    SizedBox(
+                      width: double.infinity,
+                      child: _buildActionButton(),
+                    ),
+                  ],
+                ),
+        )
         .animate()
-        .scale(begin: const Offset(0, 0), duration: 800.ms, curve: Curves.elasticOut)
-        .fadeIn(duration: 400.ms);
-  }
-
-  Widget _buildTitle() {
-    return GradientText(
-      text: 'PhishCatch',
-      style: GoogleFonts.inter(
-        fontSize: 36,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -0.5,
-      ),
-    )
-        .animate()
-        .fadeIn(delay: 200.ms, duration: 600.ms)
-        .slideY(begin: 0.3, duration: 600.ms);
-  }
-
-  Widget _buildSubtitle() {
-    return Text(
-      'Protect yourself from phishing attacks.\nPaste a URL or scan a QR code to analyze.',
-      textAlign: TextAlign.center,
-      style: GoogleFonts.inter(
-        fontSize: 15,
-        color: AppColors.textSecondary,
-        height: 1.6,
-      ),
-    )
-        .animate()
-        .fadeIn(delay: 400.ms, duration: 600.ms)
-        .slideY(begin: 0.2, duration: 600.ms);
+        .fadeIn(delay: 140.ms, duration: 300.ms)
+        .slideY(begin: 0.04, duration: 360.ms, curve: Curves.easeOutCubic);
   }
 
   Widget _buildUrlInput() {
-    return GlassCard(
-      padding: const EdgeInsets.all(6),
-      borderRadius: 20,
-      borderColor: _urlFocusNode.hasFocus ? AppColors.primary : null,
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _urlController,
-              focusNode: _urlFocusNode,
-              style: GoogleFonts.firaCode(
-                color: AppColors.textPrimary,
-                fontSize: 14,
-              ),
-              decoration: InputDecoration(
-                hintText: 'Enter URL to analyze...',
-                prefixIcon: Padding(
-                  padding: const EdgeInsets.only(left: 12, right: 8),
-                  child: Icon(
-                    Icons.link_rounded,
-                    color: AppColors.textMuted,
-                    size: 20,
-                  ),
-                ),
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                filled: false,
-                contentPadding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
-              textInputAction: TextInputAction.search,
-            ),
-          ),
-          // QR button
-          _buildQrButton(),
-        ],
+    return TextField(
+      controller: _urlController,
+      focusNode: _urlFocusNode,
+      style: GoogleFonts.firaCode(
+        color: AppColors.textPrimary,
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
       ),
-    )
-        .animate()
-        .fadeIn(delay: 600.ms, duration: 600.ms)
-        .slideY(begin: 0.2, duration: 600.ms);
-  }
-
-  Widget _buildQrButton() {
-    // On web, camera QR scanning not supported natively
-    if (kIsWeb) {
-      return Tooltip(
-        message: 'QR Scanner (mobile only)',
-        child: Container(
-          margin: const EdgeInsets.only(right: 4),
-          child: Material(
-            color: AppColors.bgCardLight,
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'QR scanning available on mobile app',
-                      style: GoogleFonts.inter(),
-                    ),
-                    backgroundColor: AppColors.bgCard,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                child: Icon(
-                  Icons.qr_code_scanner_rounded,
-                  color: AppColors.textMuted,
-                  size: 22,
-                ),
-              ),
-            ),
-          ),
+      decoration: InputDecoration(
+        hintText: 'https://example.com',
+        prefixIcon: Padding(
+          padding: const EdgeInsets.only(left: 14, right: 8),
+          child: Icon(Icons.link_rounded, color: AppColors.textMuted, size: 20),
         ),
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(right: 4),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: _isLoading ? null : _openQrScanner,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              gradient: AppColors.primaryGradient,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.3),
-                  blurRadius: 12,
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.qr_code_scanner_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
-          ),
-        ),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        filled: false,
+        contentPadding: const EdgeInsets.symmetric(vertical: 20),
       ),
+      onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
+      textInputAction: TextInputAction.search,
     );
   }
 
-  Widget _buildActionButtons() {
+  Widget _buildActionButton() {
     return SizedBox(
-      width: double.infinity,
-      height: 56,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: AppColors.primaryGradient,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primary.withValues(alpha: 0.35),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
+      height: 62,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(gradient: AppColors.primaryGradient),
         child: ElevatedButton(
           onPressed: _isLoading ? null : () => _analyzeUrl(_urlController.text),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.transparent,
+            disabledBackgroundColor: Colors.transparent,
             shadowColor: Colors.transparent,
+            padding: EdgeInsets.zero,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(0),
             ),
           ),
-          child: _isLoading
-              ? Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white.withValues(alpha: 0.9),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 140),
+            child: _isLoading
+                ? Row(
+                    key: const ValueKey('loading'),
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Analyzing...',
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                      const SizedBox(width: 8),
+                      Text(
+                        'Kontrol...',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
-                  ],
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.security_rounded, size: 20),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Analyze URL',
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                    ],
+                  )
+                : Row(
+                    key: const ValueKey('ready'),
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.security_rounded, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Kontrol et',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+          ),
         ),
       ),
-    )
-        .animate()
-        .fadeIn(delay: 700.ms, duration: 600.ms)
-        .slideY(begin: 0.2, duration: 600.ms);
+    );
+  }
+
+  Widget _buildDivider({required bool vertical}) {
+    return Container(
+      width: vertical ? 1 : double.infinity,
+      height: vertical ? 62 : 1,
+      color: Colors.white.withValues(alpha: 0.12),
+    );
   }
 
   Widget _buildErrorMessage() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.danger.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.danger.withValues(alpha: 0.3)),
+        color: AppColors.danger.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.28)),
       ),
       child: Row(
         children: [
@@ -530,146 +363,11 @@ class _HomeScreenState extends State<HomeScreen>
           Expanded(
             child: Text(
               _errorMessage!,
-              style: GoogleFonts.inter(
-                color: AppColors.danger,
-                fontSize: 13,
-              ),
+              style: GoogleFonts.inter(color: AppColors.danger, fontSize: 13),
             ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 300.ms).shake(hz: 2, duration: 400.ms);
-  }
-
-  Widget _buildFeatureCards(bool isWide) {
-    final features = [
-      _FeatureItem(
-        icon: Icons.psychology_rounded,
-        title: 'ML Detection',
-        description: 'Machine learning model analyzes 48 URL features',
-        color: AppColors.primary,
-      ),
-      _FeatureItem(
-        icon: Icons.security_rounded,
-        title: 'VirusTotal',
-        description: 'Cross-reference with VirusTotal threat database',
-        color: AppColors.accent,
-      ),
-      _FeatureItem(
-        icon: Icons.qr_code_scanner_rounded,
-        title: 'QR Scanner',
-        description: 'Scan QR codes to check URLs instantly',
-        color: AppColors.safe,
-      ),
-    ];
-
-    if (isWide) {
-      return Row(
-        children: features.asMap().entries.map((entry) {
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: entry.key == 0 ? 0 : 8,
-                right: entry.key == features.length - 1 ? 0 : 8,
-              ),
-              child: _buildFeatureCard(entry.value, entry.key),
-            ),
-          );
-        }).toList(),
-      );
-    }
-
-    return Column(
-      children: features.asMap().entries.map((entry) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: _buildFeatureCard(entry.value, entry.key),
-        );
-      }).toList(),
     );
   }
-
-  Widget _buildFeatureCard(_FeatureItem feature, int index) {
-    return GlassCard(
-      padding: const EdgeInsets.all(20),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: feature.color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(feature.icon, color: feature.color, size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  feature.title,
-                  style: GoogleFonts.inter(
-                    color: AppColors.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  feature.description,
-                  style: GoogleFonts.inter(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    )
-        .animate()
-        .fadeIn(delay: Duration(milliseconds: 900 + index * 150), duration: 500.ms)
-        .slideY(begin: 0.2, duration: 500.ms);
-  }
-
-  Widget _buildFooter() {
-    return Column(
-      children: [
-        Divider(color: AppColors.glassBorder),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.shield_outlined,
-                color: AppColors.textMuted, size: 14),
-            const SizedBox(width: 6),
-            Text(
-              'PhishCatch v1.0 — Stay safe online',
-              style: GoogleFonts.inter(
-                color: AppColors.textMuted,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ],
-    ).animate().fadeIn(delay: 1400.ms, duration: 500.ms);
-  }
-}
-
-class _FeatureItem {
-  final IconData icon;
-  final String title;
-  final String description;
-  final Color color;
-
-  _FeatureItem({
-    required this.icon,
-    required this.title,
-    required this.description,
-    required this.color,
-  });
 }
