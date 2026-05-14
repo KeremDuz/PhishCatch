@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.pipeline import ScanningPipeline
+from app.dependencies import get_scanning_pipeline
 from app.routers.analyze import router as analyze_router
 
 LOCALHOST_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
@@ -23,3 +25,11 @@ app.include_router(analyze_router)
 @app.get("/health", tags=["System"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/layers", tags=["System"])
+@app.get("/api/v1/health/layers", tags=["System"])
+def health_layers(
+    pipeline: ScanningPipeline = Depends(get_scanning_pipeline),
+) -> dict[str, object]:
+    return pipeline.health_report()

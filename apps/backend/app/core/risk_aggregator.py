@@ -42,6 +42,7 @@ class RiskAggregator:
     THREAT_INTEL_SCANNERS = {
         "URLhausScanner",
         "GoogleSafeBrowsing",
+        "GoogleWebRisk",
         "VirusTotalScanner",
     }
 
@@ -170,6 +171,14 @@ class RiskAggregator:
         return None, RiskEvidence(stage.scanner, clean_strength, reason)
 
     def _score_html(self, stage: StageResult, reason: str) -> tuple[RiskEvidence | None, RiskEvidence | None]:
+        error = str(stage.details.get("error") or "").lower()
+        if stage.verdict == "unknown" and "hostname could not be resolved" in error:
+            return RiskEvidence(
+                stage.scanner,
+                0.45,
+                "HTML content could not be verified because the hostname could not be resolved",
+            ), None
+
         threat_score = stage.risk_score
         if threat_score is None:
             threat_score = stage.details.get("threat_score")

@@ -10,7 +10,13 @@ from app.main import app, health
 
 def main() -> int:
     route_paths = {getattr(route, "path", None) for route in app.routes}
-    required_routes = {"/health", "/api/v1/analyze"}
+    required_routes = {
+        "/health",
+        "/health/layers",
+        "/api/v1/health/layers",
+        "/api/v1/analyze",
+        "/api/v1/analyze-file",
+    }
     missing_routes = sorted(required_routes - route_paths)
 
     if missing_routes:

@@ -6,6 +6,7 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+python-multipart
 beautifulsoup4
 lxml
 python-dateutil

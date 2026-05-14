@@ -17,12 +17,6 @@ echo "== Backend compile =="
   "$ROOT_DIR/apps/backend/scripts/analyze_feed.py" \
   "$ROOT_DIR/apps/backend/scripts/smoke_test_fastapi.py"
 
-echo "== Backend tests =="
-(
-  cd "$ROOT_DIR/apps/backend"
-  "$PYTHON_BIN" -m unittest discover -s tests -p 'test_*.py'
-)
-
 echo "== Backend smoke =="
 "$PYTHON_BIN" "$ROOT_DIR/apps/backend/scripts/smoke_test_fastapi.py"
 

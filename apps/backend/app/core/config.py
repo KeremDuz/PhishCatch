@@ -38,6 +38,7 @@ class Settings(BaseModel):
     virustotal_timeout_seconds: int = int(os.getenv("VIRUSTOTAL_TIMEOUT_SECONDS", "10"))
 
     google_safe_browsing_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_SAFE_BROWSING_API_KEY"))
+    google_web_risk_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_WEB_RISK_API_KEY"))
 
     ml_model_path: str = os.getenv("ML_MODEL_PATH", "phishcatch_url_model.pkl")
     ml_scaler_path: str | None = Field(default_factory=lambda: os.getenv("ML_SCALER_PATH") or None)

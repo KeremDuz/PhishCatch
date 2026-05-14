@@ -7,6 +7,7 @@ from app.utils.url_utils import canonicalize_url, ensure_http_url
 
 
 Verdict = Literal["malicious", "clean", "unknown"]
+BatchVerdict = Literal["malicious", "clean", "unknown", "invalid"]
 
 
 class AnalyzeUrlRequest(BaseModel):
@@ -61,3 +62,31 @@ class AnalyzeUrlResponse(BaseModel):
     summary: str | None = None
     signals: dict[str, Any] = Field(default_factory=dict)
     stages: list[StageResult]
+
+
+class BatchAnalyzeItem(BaseModel):
+    index: int
+    input: str
+    normalized_url: str | None = None
+    final_verdict: BatchVerdict
+    confidence: float | None = None
+    risk_score: float | None = None
+    malicious_probability: float | None = None
+    clean_probability: float | None = None
+    summary: str | None = None
+    error: str | None = None
+
+
+class BatchAnalyzeSummary(BaseModel):
+    submitted: int
+    analyzed: int
+    malicious: int
+    clean: int
+    unknown: int
+    invalid: int
+
+
+class BatchAnalyzeResponse(BaseModel):
+    filename: str
+    summary: BatchAnalyzeSummary
+    results: list[BatchAnalyzeItem]

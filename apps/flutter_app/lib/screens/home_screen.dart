@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import 'batch_result_screen.dart';
 import 'result_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -18,7 +20,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
   final FocusNode _urlFocusNode = FocusNode();
   bool _isLoading = false;
+  bool _isBatchLoading = false;
   String? _errorMessage;
+
+  bool get _isBusy => _isLoading || _isBatchLoading;
 
   @override
   void initState() {
@@ -86,6 +91,75 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _pickAndAnalyzeFile() async {
+    if (_isBusy) return;
+
+    setState(() {
+      _isBatchLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['txt', 'csv'],
+        withData: true,
+      );
+
+      if (!mounted) return;
+      if (picked == null || picked.files.isEmpty) {
+        setState(() => _isBatchLoading = false);
+        return;
+      }
+
+      final file = picked.files.single;
+      final bytes = file.bytes;
+      if (bytes == null) {
+        setState(() {
+          _isBatchLoading = false;
+          _errorMessage = 'Dosya okunamadi.';
+        });
+        return;
+      }
+
+      final result = await PhishCatchApiService.analyzeUrlFile(
+        bytes: bytes,
+        filename: file.name,
+      );
+
+      if (!mounted) return;
+      setState(() => _isBatchLoading = false);
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              BatchResultScreen(result: result),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position:
+                    Tween<Offset>(
+                      begin: const Offset(0, 0.04),
+                      end: Offset.zero,
+                    ).animate(
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                    ),
+                child: child,
+              ),
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 280),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isBatchLoading = false;
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -110,6 +184,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         _buildIdentity(isWide),
                         SizedBox(height: isWide ? 50 : 38),
                         _buildCommandSurface(isWide),
+                        const SizedBox(height: 14),
+                        _buildBatchUploadSurface(isWide),
                         if (_errorMessage != null) ...[
                           const SizedBox(height: 14),
                           _buildErrorMessage(),
@@ -271,7 +347,8 @@ class _HomeScreenState extends State<HomeScreen> {
         filled: false,
         contentPadding: const EdgeInsets.symmetric(vertical: 20),
       ),
-      onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
+      onSubmitted: _isBusy ? null : (value) => _analyzeUrl(value),
+      enabled: !_isBatchLoading,
       textInputAction: TextInputAction.search,
     );
   }
@@ -282,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: DecoratedBox(
         decoration: const BoxDecoration(gradient: AppColors.primaryGradient),
         child: ElevatedButton(
-          onPressed: _isLoading ? null : () => _analyzeUrl(_urlController.text),
+          onPressed: _isBusy ? null : () => _analyzeUrl(_urlController.text),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.transparent,
             disabledBackgroundColor: Colors.transparent,
@@ -334,6 +411,141 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchUploadSurface(bool isWide) {
+    return Container(
+          decoration: BoxDecoration(
+            color: AppColors.bgSurface.withValues(alpha: 0.66),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+          ),
+          padding: EdgeInsets.all(isWide ? 14 : 12),
+          child: isWide
+              ? Row(
+                  children: [
+                    _buildUploadIcon(),
+                    const SizedBox(width: 14),
+                    Expanded(child: _buildUploadCopy()),
+                    const SizedBox(width: 14),
+                    SizedBox(width: 170, child: _buildUploadButton()),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        _buildUploadIcon(),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildUploadCopy()),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildUploadButton(),
+                  ],
+                ),
+        )
+        .animate()
+        .fadeIn(delay: 220.ms, duration: 300.ms)
+        .slideY(begin: 0.04, duration: 360.ms, curve: Curves.easeOutCubic);
+  }
+
+  Widget _buildUploadIcon() {
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.28)),
+      ),
+      child: const Icon(
+        Icons.upload_file_rounded,
+        color: AppColors.accent,
+        size: 24,
+      ),
+    );
+  }
+
+  Widget _buildUploadCopy() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Toplu analiz',
+          style: GoogleFonts.inter(
+            color: AppColors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'TXT veya CSV',
+          style: GoogleFonts.inter(
+            color: AppColors.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUploadButton() {
+    return SizedBox(
+      height: 44,
+      child: OutlinedButton(
+        onPressed: _isBusy ? null : _pickAndAnalyzeFile,
+        style: OutlinedButton.styleFrom(
+          side: BorderSide(color: AppColors.accent.withValues(alpha: 0.42)),
+          foregroundColor: AppColors.accent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 140),
+          child: _isBatchLoading
+              ? Row(
+                  key: const ValueKey('batch-loading'),
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: AppColors.accent.withValues(alpha: 0.9),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Analiz...',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  key: const ValueKey('batch-ready'),
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.folder_open_rounded, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Dosya sec',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
