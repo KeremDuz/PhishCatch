@@ -6,6 +6,12 @@ from pathlib import Path
 
 
 class FlutterWebHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):  # type: ignore[override]
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def send_head(self):  # type: ignore[override]
         path = self.translate_path(self.path)
         requested = Path(path)

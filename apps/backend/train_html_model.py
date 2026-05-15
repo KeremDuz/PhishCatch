@@ -26,6 +26,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import GroupShuffleSplit
 
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS, extract_html_features
+from app.ml.incremental_model import IncrementalBinaryClassifier
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
@@ -90,7 +91,7 @@ def main() -> None:
         )
     )
 
-    candidate = build_model(args.seed)
+    candidate = build_training_model(args)
     candidate.fit(
         feature_frame.iloc[train_indices],
         label_series.iloc[train_indices],
@@ -103,13 +104,14 @@ def main() -> None:
     print_metrics(metrics)
 
     print("4. Final model tum secili veriyle tekrar egitiliyor...", flush=True)
-    final_model = build_model(args.seed)
+    final_model = build_training_model(args)
     final_model.fit(feature_frame, label_series, sample_weight=sample_weight)
 
     joblib.dump(final_model, args.model_output, compress=3)
     metadata = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "model_type": type(final_model).__name__,
+        "supports_partial_fit": hasattr(final_model, "partial_fit"),
         "threshold": args.threshold,
         "source": {
             "index_sql": str(args.index_sql),
@@ -151,6 +153,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--model-family", choices=("incremental", "batch"), default="incremental")
+    parser.add_argument("--incremental-alpha", type=float, default=0.0001)
+    parser.add_argument("--incremental-epochs", type=int, default=8)
+    parser.add_argument("--incremental-batch-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--progress-every", type=int, default=1000)
     parser.add_argument("--workers", type=int, default=max(1, min(4, os.cpu_count() or 1)))
@@ -283,6 +289,19 @@ def build_model(seed: int) -> HistGradientBoostingClassifier:
         validation_fraction=0.12,
         random_state=seed,
     )
+
+
+def build_training_model(args: argparse.Namespace):
+    if args.model_family == "incremental":
+        return IncrementalBinaryClassifier(
+            feature_names=HTML_MODEL_FEATURE_COLUMNS,
+            alpha=args.incremental_alpha,
+            epochs=args.incremental_epochs,
+            batch_size=args.incremental_batch_size,
+            random_state=args.seed,
+        )
+
+    return build_model(args.seed)
 
 
 def calculate_metrics(y_true: pd.Series, y_pred, y_prob) -> dict[str, object]:

@@ -1,4 +1,7 @@
 import csv
+from datetime import datetime, timedelta, timezone
+import secrets
+import hmac
 import io
 from urllib.parse import urlsplit
 
@@ -11,6 +14,8 @@ from app.models.schemas import (
     AdminBulkObservationTrainingSampleRequest,
     AdminBulkObservationTrainingSampleResponse,
     AdminBulkObservationTrainingSampleResult,
+    AdminLoginRequest,
+    AdminLoginResponse,
     AdminObservationDetail,
     AdminObservationListItem,
     AdminObservationListResponse,
@@ -28,16 +33,85 @@ from app.storage import TrainingStore
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Training Admin"])
 MAX_IMPORT_FILE_BYTES = 512 * 1024
+_ADMIN_SESSIONS: dict[str, datetime] = {}
+
+
+@router.post("/login", response_model=AdminLoginResponse)
+def admin_login(payload: AdminLoginRequest) -> AdminLoginResponse:
+    if not settings.training_admin_username or not settings.training_admin_password:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin login is disabled. Set TRAINING_ADMIN_USERNAME and TRAINING_ADMIN_PASSWORD to enable it.",
+        )
+
+    username_ok = hmac.compare_digest(
+        payload.username.strip(),
+        settings.training_admin_username,
+    )
+    password_ok = hmac.compare_digest(
+        payload.password,
+        settings.training_admin_password,
+    )
+    if not username_ok or not password_ok:
+        raise HTTPException(status_code=403, detail="Invalid username or password.")
+
+    _cleanup_expired_sessions()
+    token = secrets.token_urlsafe(32)
+    expires_in = max(60, settings.training_admin_session_ttl_seconds)
+    _ADMIN_SESSIONS[token] = _utc_now() + timedelta(seconds=expires_in)
+    return AdminLoginResponse(access_token=token, expires_in=expires_in)
 
 
 def require_training_admin(x_admin_token: str | None = Header(default=None)) -> None:
-    if not settings.training_admin_token:
+    if not _admin_auth_configured():
         raise HTTPException(
             status_code=503,
-            detail="Training admin API is disabled. Set TRAINING_ADMIN_TOKEN to enable it.",
+            detail="Training admin API is disabled. Set admin username/password or TRAINING_ADMIN_TOKEN to enable it.",
         )
-    if x_admin_token != settings.training_admin_token:
-        raise HTTPException(status_code=403, detail="Invalid admin token.")
+
+    if _is_valid_legacy_token(x_admin_token) or _is_valid_admin_session(x_admin_token):
+        return
+
+    raise HTTPException(status_code=401, detail="Admin session is invalid or expired.")
+
+
+def _admin_auth_configured() -> bool:
+    has_login = bool(settings.training_admin_username and settings.training_admin_password)
+    return bool(settings.training_admin_token or has_login)
+
+
+def _is_valid_legacy_token(token: str | None) -> bool:
+    return bool(
+        token
+        and settings.training_admin_token
+        and hmac.compare_digest(token, settings.training_admin_token)
+    )
+
+
+def _is_valid_admin_session(token: str | None) -> bool:
+    if not token:
+        return False
+
+    expires_at = _ADMIN_SESSIONS.get(token)
+    if expires_at is None:
+        return False
+
+    if expires_at <= _utc_now():
+        _ADMIN_SESSIONS.pop(token, None)
+        return False
+
+    return True
+
+
+def _cleanup_expired_sessions() -> None:
+    now = _utc_now()
+    for token, expires_at in list(_ADMIN_SESSIONS.items()):
+        if expires_at <= now:
+            _ADMIN_SESSIONS.pop(token, None)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @router.post("/training-samples", response_model=AdminTrainingSampleResponse)

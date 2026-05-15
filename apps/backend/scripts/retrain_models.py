@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.config import settings
+from app.ml.incremental_model import IncrementalBinaryClassifier
 from app.ml.feature_extractor import URL_FEATURE_COLUMNS
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS
 from scripts.export_training_datasets import HTML_OUTPUT_NAME, URL_OUTPUT_NAME, export_training_datasets
@@ -60,18 +61,19 @@ def main() -> int:
         name="url",
         dataset_path=args.dataset_dir / URL_OUTPUT_NAME,
         feature_columns=URL_FEATURE_COLUMNS,
-        build_model=lambda: build_url_model(args.seed),
+        build_model=lambda: build_url_model(args, URL_FEATURE_COLUMNS),
         model_path=args.model_dir / f"phishcatch_url_model_{timestamp}.pkl",
         min_samples=args.min_samples,
         test_size=args.test_size,
         threshold=args.threshold,
         seed=args.seed,
+        sample_weight_mode=args.url_class_weight if args.model_family == "incremental" else "none",
     )
     html_result = train_candidate(
         name="html",
         dataset_path=args.dataset_dir / HTML_OUTPUT_NAME,
         feature_columns=HTML_MODEL_FEATURE_COLUMNS,
-        build_model=lambda: build_html_model(args.seed),
+        build_model=lambda: build_html_candidate_model(args, HTML_MODEL_FEATURE_COLUMNS),
         model_path=args.model_dir / f"phishcatch_html_model_{timestamp}.pkl",
         min_samples=args.min_samples,
         test_size=args.test_size,
@@ -89,6 +91,7 @@ def main() -> int:
             "threshold": args.threshold,
             "test_size": args.test_size,
             "min_samples": args.min_samples,
+            "model_family": args.model_family,
             "models": {
                 "url": url_result,
                 "html": html_result,
@@ -117,6 +120,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--model-family",
+        choices=("incremental", "batch"),
+        default="incremental",
+        help="Train partial_fit-capable incremental models, or legacy batch models.",
+    )
+    parser.add_argument("--incremental-alpha", type=float, default=0.0001)
+    parser.add_argument("--incremental-epochs", type=int, default=8)
+    parser.add_argument("--incremental-batch-size", type=int, default=512)
+    parser.add_argument(
+        "--url-class-weight",
+        choices=("balanced", "none"),
+        default="balanced",
+        help="Sample weighting for the URL incremental candidate model.",
+    )
+    parser.add_argument(
         "--html-class-weight",
         choices=("balanced", "none"),
         default="balanced",
@@ -125,7 +143,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_url_model(seed: int) -> Pipeline:
+def build_url_model(args: argparse.Namespace, feature_columns: list[str]):
+    if args.model_family == "incremental":
+        return build_incremental_model(args, feature_columns)
+
     return Pipeline(
         steps=[
             ("scaler", StandardScaler()),
@@ -133,13 +154,30 @@ def build_url_model(seed: int) -> Pipeline:
                 "classifier",
                 RandomForestClassifier(
                     n_estimators=300,
-                    random_state=seed,
+                    random_state=args.seed,
                     n_jobs=-1,
                     class_weight="balanced_subsample",
                     min_samples_leaf=2,
                 ),
             ),
         ]
+    )
+
+
+def build_html_candidate_model(args: argparse.Namespace, feature_columns: list[str]):
+    if args.model_family == "incremental":
+        return build_incremental_model(args, feature_columns)
+
+    return build_html_model(args.seed)
+
+
+def build_incremental_model(args: argparse.Namespace, feature_columns: list[str]) -> IncrementalBinaryClassifier:
+    return IncrementalBinaryClassifier(
+        feature_names=feature_columns,
+        alpha=args.incremental_alpha,
+        epochs=args.incremental_epochs,
+        batch_size=args.incremental_batch_size,
+        random_state=args.seed,
     )
 
 
@@ -211,6 +249,7 @@ def train_candidate(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "model_name": name,
         "model_type": type(final_model).__name__,
+        "supports_partial_fit": hasattr(final_model, "partial_fit"),
         "dataset_path": str(dataset_path),
         "model_path": str(model_path),
         "feature_count": len(feature_columns),

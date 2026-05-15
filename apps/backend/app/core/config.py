@@ -64,6 +64,9 @@ class Settings(BaseModel):
         str(BACKEND_ROOT / "data" / "phishcatch_training.sqlite3"),
     )
     training_admin_token: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_TOKEN") or None)
+    training_admin_username: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_USERNAME") or None)
+    training_admin_password: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_PASSWORD") or None)
+    training_admin_session_ttl_seconds: int = int(os.getenv("TRAINING_ADMIN_SESSION_TTL_SECONDS", "28800"))
 
 
 settings = Settings()

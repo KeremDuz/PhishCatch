@@ -36,6 +36,18 @@ def main() -> int:
             str(args.test_size),
             "--threshold",
             str(args.threshold),
+            "--model-family",
+            args.model_family,
+            "--incremental-alpha",
+            str(args.incremental_alpha),
+            "--incremental-epochs",
+            str(args.incremental_epochs),
+            "--incremental-batch-size",
+            str(args.incremental_batch_size),
+            "--url-class-weight",
+            args.url_class_weight,
+            "--html-class-weight",
+            args.html_class_weight,
         ],
     ]
 
@@ -81,6 +93,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-samples", type=int, default=20)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--model-family", choices=("incremental", "batch"), default="incremental")
+    parser.add_argument("--incremental-alpha", type=float, default=0.0001)
+    parser.add_argument("--incremental-epochs", type=int, default=8)
+    parser.add_argument("--incremental-batch-size", type=int, default=512)
+    parser.add_argument("--url-class-weight", choices=("balanced", "none"), default="balanced")
+    parser.add_argument("--html-class-weight", choices=("balanced", "none"), default="balanced")
     parser.add_argument("--promote", action="store_true", help="Run safe promotion after retraining.")
     parser.add_argument("--dry-run-promotion", action="store_true", help="Evaluate promotion gates without copying models.")
     parser.add_argument("--min-rows", type=int, default=20)

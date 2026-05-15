@@ -14,7 +14,7 @@ from app.ml.feature_extractor import (
 )
 
 
-BALANCED_URLS_PATH = Path("balanced_urls.csv")
+BALANCED_URLS_PATH_CANDIDATES = (Path("balanced_urls.csv"), Path("data/balanced_urls.csv"))
 MENDELEY_INDEX_PATH = Path("Mendeley_dataset/index.sql")
 URL_OUTPUT_PATH = "phishcatch_training_data_url.csv"
 MENDELEY_48_OUTPUT_PATH = "phishcatch_training_data_48.csv"
@@ -27,6 +27,24 @@ def parse_args() -> argparse.Namespace:
         choices=["url", "mendeley48"],
         default="url",
         help="Feature schema to generate. Default: url",
+    )
+    parser.add_argument(
+        "--balanced-urls",
+        type=Path,
+        default=None,
+        help="Path to balanced_urls.csv. Defaults to balanced_urls.csv, then data/balanced_urls.csv.",
+    )
+    parser.add_argument(
+        "--mendeley-index",
+        type=Path,
+        default=MENDELEY_INDEX_PATH,
+        help="Path to Mendeley_dataset/index.sql.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output CSV path. Defaults to the schema-specific training CSV.",
     )
     return parser.parse_args()
 
@@ -69,15 +87,27 @@ def _merge_and_deduplicate_url_sets(base_dataframe: pd.DataFrame, extra_datafram
     return grouped[["url", "result"]]
 
 
-def _load_training_urls() -> pd.DataFrame:
-    print("1. balanced_urls.csv yukleniyor...")
-    dataframe = pd.read_csv(BALANCED_URLS_PATH)
+def _resolve_balanced_urls_path(configured_path: Path | None) -> Path:
+    if configured_path is not None:
+        return configured_path
+
+    for candidate in BALANCED_URLS_PATH_CANDIDATES:
+        if candidate.exists():
+            return candidate
+
+    return BALANCED_URLS_PATH_CANDIDATES[0]
+
+
+def _load_training_urls(balanced_urls_path: Path | None, mendeley_index_path: Path) -> pd.DataFrame:
+    resolved_balanced_urls_path = _resolve_balanced_urls_path(balanced_urls_path)
+    print(f"1. {resolved_balanced_urls_path} yukleniyor...")
+    dataframe = pd.read_csv(resolved_balanced_urls_path)
 
     if "url" not in dataframe.columns or "result" not in dataframe.columns:
-        raise ValueError("balanced_urls.csv must contain 'url' and 'result' columns")
+        raise ValueError(f"{resolved_balanced_urls_path} must contain 'url' and 'result' columns")
 
-    print("2. Mendeley_dataset/index.sql kontrol ediliyor...")
-    mendeley_dataframe = _load_mendeley_urls(MENDELEY_INDEX_PATH)
+    print(f"2. {mendeley_index_path} kontrol ediliyor...")
+    mendeley_dataframe = _load_mendeley_urls(mendeley_index_path)
     if len(mendeley_dataframe) > 0:
         print(f"Mendeley etiketli URL bulundu: {len(mendeley_dataframe)}")
         dataframe = _merge_and_deduplicate_url_sets(dataframe, mendeley_dataframe)
@@ -92,17 +122,17 @@ def _load_training_urls() -> pd.DataFrame:
 
 def main() -> None:
     args = parse_args()
-    dataframe = _load_training_urls()
+    dataframe = _load_training_urls(args.balanced_urls, args.mendeley_index)
 
     if args.schema == "mendeley48":
         print("3. Mendeley 48 approx feature cikariliyor...")
         extracted = dataframe["url"].apply(extract_48_features)
-        output_path = MENDELEY_48_OUTPUT_PATH
+        output_path = args.output or Path(MENDELEY_48_OUTPUT_PATH)
         columns = MENDELEY_48_FEATURE_COLUMNS
     else:
         print("3. URL-only lexical feature cikariliyor...")
         extracted = dataframe["url"].apply(extract_url_features)
-        output_path = URL_OUTPUT_PATH
+        output_path = args.output or Path(URL_OUTPUT_PATH)
         columns = URL_FEATURE_COLUMNS
 
     final_dataframe = pd.concat([dataframe["result"].astype(int), extracted], axis=1)

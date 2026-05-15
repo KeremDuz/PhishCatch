@@ -22,6 +22,10 @@ apps/backend/*.arff
 apps/backend/phishcatch_rf_model_*.pkl
 apps/backend/phishcatch_scaler_*.pkl
 apps/backend/phishcatch_training_data_*.csv
+apps/backend/Arttırımlı_*_ML.pkl
+apps/backend/Arttırımlı_*_ML.metadata.json
+apps/backend/Arttırımlı_*_training_features.csv
+apps/backend/data/*.csv
 
 # Generated benchmark / feed outputs
 apps/backend/feed*_results.json

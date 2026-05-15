@@ -15,12 +15,14 @@ class AdminScreen extends StatefulWidget {
 }
 
 class _AdminScreenState extends State<AdminScreen> {
-  final TextEditingController _tokenController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _manualUrlController = TextEditingController();
   final TextEditingController _manualNotesController = TextEditingController();
   String? _token;
   String? _error;
+  bool _loginBusy = false;
   bool _loading = false;
   bool _actionBusy = false;
   bool _manualBusy = false;
@@ -34,7 +36,8 @@ class _AdminScreenState extends State<AdminScreen> {
 
   @override
   void dispose() {
-    _tokenController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
     _searchController.dispose();
     _manualUrlController.dispose();
     _manualNotesController.dispose();
@@ -42,16 +45,34 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Future<void> _connect() async {
-    final token = _tokenController.text.trim();
-    if (token.isEmpty) {
-      setState(() => _error = 'Admin token gerekli.');
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+    if (username.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Kullanici adi ve sifre gerekli.');
       return;
     }
     setState(() {
-      _token = token;
+      _loginBusy = true;
       _error = null;
     });
-    await _loadAll();
+    try {
+      final session = await PhishCatchApiService.loginAdmin(
+        username: username,
+        password: password,
+      );
+      if (!mounted) return;
+      setState(() {
+        _token = session.accessToken;
+        _loginBusy = false;
+      });
+      await _loadAll();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loginBusy = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
   }
 
   Future<void> _loadAll() async {
@@ -252,19 +273,30 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
               const SizedBox(height: 18),
               TextField(
-                controller: _tokenController,
+                controller: _usernameController,
+                decoration: const InputDecoration(
+                  labelText: 'Kullanici adi',
+                  prefixIcon: Icon(Icons.person_rounded),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _passwordController,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'X-Admin-Token',
-                  prefixIcon: Icon(Icons.key_rounded),
+                  labelText: 'Sifre',
+                  prefixIcon: Icon(Icons.lock_rounded),
                 ),
-                onSubmitted: (_) => _connect(),
+                onSubmitted: (_) {
+                  if (!_loginBusy) _connect();
+                },
               ),
               const SizedBox(height: 14),
               ElevatedButton.icon(
-                onPressed: _connect,
+                onPressed: _loginBusy ? null : _connect,
                 icon: const Icon(Icons.login_rounded),
-                label: const Text('Giris'),
+                label: Text(_loginBusy ? 'Giris yapiliyor' : 'Giris'),
               ),
               if (_error != null) _errorLine(),
             ],

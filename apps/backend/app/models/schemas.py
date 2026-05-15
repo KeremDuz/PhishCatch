@@ -93,6 +93,17 @@ class BatchAnalyzeResponse(BaseModel):
     results: list[BatchAnalyzeItem]
 
 
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminLoginResponse(BaseModel):
+    access_token: str
+    token_type: Literal["admin_session"] = "admin_session"
+    expires_in: int
+
+
 class AdminTrainingSampleRequest(BaseModel):
     url: str
     label: Literal[0, 1]

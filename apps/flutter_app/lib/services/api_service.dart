@@ -460,6 +460,20 @@ class AdminBulkTrainingResult {
   }
 }
 
+class AdminLoginSession {
+  final String accessToken;
+  final int expiresIn;
+
+  AdminLoginSession({required this.accessToken, required this.expiresIn});
+
+  factory AdminLoginSession.fromJson(Map<String, dynamic> json) {
+    return AdminLoginSession(
+      accessToken: json['access_token'] ?? '',
+      expiresIn: json['expires_in'] ?? 0,
+    );
+  }
+}
+
 class PhishCatchApiService {
   static const String _configuredBaseUrl = String.fromEnvironment(
     'PHISHCATCH_API_BASE_URL',
@@ -546,6 +560,22 @@ class PhishCatchApiService {
     } on http.ClientException {
       throw Exception('Backend baglantisi kurulamadi. Backend acik mi?');
     }
+  }
+
+  static Future<AdminLoginSession> loginAdmin({
+    required String username,
+    required String password,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/v1/admin/login');
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 30));
+    _throwIfAdminError(response);
+    return AdminLoginSession.fromJson(jsonDecode(response.body));
   }
 
   static Future<AdminObservationPage> listAdminObservations({
