@@ -65,8 +65,29 @@ class ScanningPipeline:
 
         threat_intel_stages = self._scan_threat_intelligence(current_url, external_reputation_blocked)
         stages.extend(threat_intel_stages)
-        if any(stage.verdict == "malicious" for stage in threat_intel_stages):
-            return self._build_response(current_url, original_input, stages, preprocessing_details)
+        malicious_reputation_stages = [
+            stage
+            for stage in threat_intel_stages
+            if stage.verdict == "malicious"
+        ]
+        if malicious_reputation_stages:
+            return self._build_response(
+                current_url,
+                original_input,
+                stages,
+                preprocessing_details,
+                decided_by="ThreatIntelShortCircuit",
+                extra_signals={
+                    "short_circuit": {
+                        "layer": "threat_intelligence",
+                        "reason": "At least one trusted reputation API returned malicious.",
+                        "matched_scanners": [
+                            stage.scanner
+                            for stage in malicious_reputation_stages
+                        ],
+                    }
+                },
+            )
 
         for scanner in self.scanners:
             if external_reputation_blocked and scanner.name in EXTERNAL_REPUTATION_SCANNERS:
@@ -134,11 +155,15 @@ class ScanningPipeline:
         original_input: str | None,
         stages: list[StageResult],
         preprocessing_details: dict[str, object],
+        decided_by: str = "RiskAggregator",
+        extra_signals: dict[str, object] | None = None,
     ) -> AnalyzeUrlResponse:
         decision = self.risk_aggregator.aggregate(stages)
         signals = dict(decision.signals)
         if preprocessing_details:
             signals["preprocessing"] = preprocessing_details
+        if extra_signals:
+            signals.update(extra_signals)
 
         return AnalyzeUrlResponse(
             url=current_url,
@@ -149,7 +174,7 @@ class ScanningPipeline:
             risk_score=decision.risk_score,
             malicious_probability=decision.malicious_probability,
             clean_probability=decision.clean_probability,
-            decided_by="RiskAggregator",
+            decided_by=decided_by,
             summary=decision.summary,
             signals=signals,
             stages=stages,

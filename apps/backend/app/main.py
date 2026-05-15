@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.pipeline import ScanningPipeline
 from app.dependencies import get_scanning_pipeline
+from app.routers.admin_training import router as admin_training_router
 from app.routers.analyze import router as analyze_router
 
 LOCALHOST_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(analyze_router)
+app.include_router(admin_training_router)
 
 
 @app.get("/health", tags=["System"])

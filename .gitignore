@@ -30,6 +30,10 @@ apps/backend/feed_*_results*.json
 apps/backend/feed_*_results*.csv
 apps/backend/feed_*_review_*.csv
 apps/backend/model_benchmark_summary.csv
+apps/backend/data/*.sqlite3
+apps/backend/data/*.sqlite3-*
+apps/backend/generated/
+apps/backend/models/
 
 # Local scratch/test input files
 apps/backend/feed1.txt

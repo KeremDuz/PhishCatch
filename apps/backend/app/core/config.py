@@ -59,5 +59,11 @@ class Settings(BaseModel):
 
     urlhaus_auth_key: str | None = Field(default_factory=lambda: os.getenv("URLHAUS_AUTH_KEY"))
 
+    training_db_path: str = os.getenv(
+        "TRAINING_DB_PATH",
+        str(BACKEND_ROOT / "data" / "phishcatch_training.sqlite3"),
+    )
+    training_admin_token: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_TOKEN") or None)
+
 
 settings = Settings()

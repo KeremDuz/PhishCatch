@@ -417,6 +417,7 @@ class HtmlScraperScanner(BaseScanner):
             js_threats = _scan_js_threats(soup, raw_html)
             external_iframes = _scan_iframes(soup, base_domain)
             html_model_result = self._predict_html_model(final_url, raw_html)
+            html_training_features = html_model_result.pop("features", None)
 
             # Form action analizi
             forms = soup.find_all("form")
@@ -608,6 +609,7 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
+                    training_features={"html_features": html_training_features} if html_training_features else {},
                 )
             elif threat_score >= 0.3:
                 return StageResult(
@@ -619,6 +621,7 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
+                    training_features={"html_features": html_training_features} if html_training_features else {},
                 )
             else:
                 return StageResult(
@@ -629,6 +632,7 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason="DOM structure appears normal",
                     details=details,
+                    training_features={"html_features": html_training_features} if html_training_features else {},
                 )
 
         except Exception as e:
@@ -824,15 +828,29 @@ class HtmlScraperScanner(BaseScanner):
             return None
 
     def _predict_html_model(self, final_url: str, raw_html: str) -> dict[str, object]:
+        try:
+            features = extract_html_features_dataframe(url=final_url, raw_html=raw_html, final_url=final_url)
+            feature_values = {
+                str(column): float(features.iloc[0][column])
+                for column in features.columns
+            }
+        except Exception as exc:
+            return {
+                "available": False,
+                "model_path": self.model_path,
+                "reason": "HTML feature extraction failed",
+                "error": str(exc),
+            }
+
         if self.model is None:
             return {
                 "available": False,
                 "model_path": self.model_path,
                 "reason": "HTML model unavailable",
+                "features": feature_values,
             }
 
         try:
-            features = extract_html_features_dataframe(url=final_url, raw_html=raw_html, final_url=final_url)
             probability = float(self.model.predict_proba(features)[0][1])
             model_risk_score = self._model_probability_to_risk(probability)
             return {
@@ -842,6 +860,7 @@ class HtmlScraperScanner(BaseScanner):
                 "clean_probability": round(1 - probability, 4),
                 "model_risk_score": round(model_risk_score, 4),
                 "feature_count": int(features.shape[1]),
+                "features": feature_values,
             }
         except Exception as exc:
             return {
@@ -849,6 +868,7 @@ class HtmlScraperScanner(BaseScanner):
                 "model_path": self.model_path,
                 "reason": "HTML model prediction failed",
                 "error": str(exc),
+                "features": feature_values,
             }
 
     @staticmethod
