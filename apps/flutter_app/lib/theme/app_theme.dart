@@ -3,21 +3,21 @@ import 'package:google_fonts/google_fonts.dart';
 
 class AppColors {
   // Primary gradient colors
-  static const Color primary = Color(0xFF6D5EF5);
-  static const Color primaryLight = Color(0xFF9B8CFF);
-  static const Color primaryDark = Color(0xFF3E35B8);
+  static const Color primary = Color(0xFF6C63FF);
+  static const Color primaryLight = Color(0xFF8F7CFF);
+  static const Color primaryDark = Color(0xFF302B9B);
 
   // Accent/secondary
   static const Color accent = Color(0xFF25D6A2);
   static const Color accentGlow = Color(0x4025D6A2);
-  static const Color electric = Color(0xFF00C8FF);
+  static const Color electric = Color(0xFF19D4F2);
   static const Color magenta = Color(0xFFFF4FD8);
 
   // Background palette
-  static const Color bgDark = Color(0xFF050711);
+  static const Color bgDark = Color(0xFF050817);
   static const Color bgCard = Color(0xFF111525);
-  static const Color bgCardLight = Color(0xFF1B2033);
-  static const Color bgSurface = Color(0xFF0B1020);
+  static const Color bgCardLight = Color(0xFF24283A);
+  static const Color bgSurface = Color(0xFF090D1D);
 
   // Status colors
   static const Color safe = Color(0xFF2DE38B);
@@ -39,13 +39,13 @@ class AppColors {
 
   // Gradients
   static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primary, electric, accent],
+    colors: [primary, Color(0xFF328BFF), electric],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient bgGradient = LinearGradient(
-    colors: [bgDark, Color(0xFF0A1020), Color(0xFF07130F), bgDark],
+    colors: [Color(0xFF060919), Color(0xFF080D20), bgDark],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );

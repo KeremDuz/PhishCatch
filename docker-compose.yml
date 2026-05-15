@@ -3,6 +3,8 @@ services:
     build:
       context: ./apps/backend
     image: phishcatch-backend:local
+    env_file:
+      - ./apps/backend/.env
     ports:
       - "8001:8000"
     environment:
@@ -11,6 +13,9 @@ services:
       HTML_BROWSER_RENDER_ENABLED: "0"
       SCANNER_CACHE_ENABLED: "1"
       SCANNER_CACHE_TTL_SECONDS: "900"
+    volumes:
+      - backend-data:/app/data
+    restart: unless-stopped
 
   frontend:
     build:
@@ -19,4 +24,9 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  backend-data:

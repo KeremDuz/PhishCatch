@@ -17,17 +17,18 @@ class CyberBackdrop extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           Align(
-            alignment: dense ? Alignment.topLeft : Alignment.topCenter,
+            alignment: Alignment.topCenter,
             child: FractionallySizedBox(
-              widthFactor: dense ? 1.0 : 0.7,
-              heightFactor: 0.32,
+              widthFactor: 1.0,
+              heightFactor: dense ? 0.42 : 0.36,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      AppColors.electric.withValues(alpha: 0.10),
+                      AppColors.primary.withValues(alpha: 0.11),
+                      AppColors.electric.withValues(alpha: 0.04),
                       Colors.transparent,
                     ],
                   ),
@@ -39,15 +40,25 @@ class CyberBackdrop extends StatelessWidget {
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  border: Border(
-                    left: BorderSide(
-                      color: AppColors.electric.withValues(alpha: 0.45),
-                      width: 2,
-                    ),
-                    right: BorderSide(
-                      color: AppColors.accent.withValues(alpha: 0.32),
-                      width: 2,
-                    ),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.045),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomLeft,
+                    end: Alignment.topRight,
+                    colors: [
+                      AppColors.electric.withValues(alpha: 0.035),
+                      Colors.transparent,
+                      AppColors.primary.withValues(alpha: 0.035),
+                    ],
                   ),
                 ),
               ),

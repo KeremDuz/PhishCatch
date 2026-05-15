@@ -40,6 +40,7 @@ dependencies:
   file_picker: ^10.3.7
   google_fonts: ^8.0.2
   flutter_animate: ^4.5.2
+  mobile_scanner: ^7.2.0
 
 dev_dependencies:
   flutter_test:

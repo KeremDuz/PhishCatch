@@ -39,6 +39,7 @@ class RiskAggregator:
 
     MALICIOUS_THRESHOLD = 0.6
     UNKNOWN_THRESHOLD = 0.35
+    HTML_SIGNAL_THRESHOLD = 0.3
     THREAT_INTEL_SCANNERS = {
         "URLhausScanner",
         "GoogleSafeBrowsing",
@@ -186,8 +187,8 @@ class RiskAggregator:
             return None, None
 
         threat_score = float(threat_score)
-        if threat_score >= 0.3:
-            return RiskEvidence(stage.scanner, self._clamp(threat_score), reason), None
+        if threat_score >= self.HTML_SIGNAL_THRESHOLD:
+            return RiskEvidence(stage.scanner, self._html_evidence_score(threat_score), reason), None
 
         return None, RiskEvidence(stage.scanner, 0.1, reason)
 
@@ -210,11 +211,11 @@ class RiskAggregator:
         if has_strong_local_hit:
             return min(0.05, raw_offset)
 
-        has_moderate_non_resolver_hit = any(
-            evidence.scanner != "UrlResolver" and evidence.score >= 0.4
+        has_moderate_non_html_hit = any(
+            evidence.scanner not in {"UrlResolver", "HtmlScraper"} and evidence.score >= 0.4
             for evidence in positive
         )
-        if has_moderate_non_resolver_hit:
+        if has_moderate_non_html_hit:
             return min(0.04, raw_offset)
 
         has_multiple_local_hits = (
@@ -232,6 +233,17 @@ class RiskAggregator:
         for score in scores:
             safe_product *= 1 - RiskAggregator._clamp(float(score))
         return 1 - safe_product
+
+    @classmethod
+    def _html_evidence_score(cls, raw_score: float) -> float:
+        raw_score = cls._clamp(raw_score)
+        if raw_score < cls.HTML_SIGNAL_THRESHOLD:
+            return 0.0
+        if raw_score < 0.6:
+            return 0.14 + (((raw_score - cls.HTML_SIGNAL_THRESHOLD) / 0.3) * 0.16)
+        if raw_score < 0.85:
+            return 0.36 + (((raw_score - 0.6) / 0.25) * 0.14)
+        return min(0.75, 0.5 + (((raw_score - 0.85) / 0.15) * 0.25))
 
     @staticmethod
     def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:

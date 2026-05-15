@@ -18,10 +18,10 @@ RUN pip install --upgrade pip setuptools wheel \
     && pip install -r requirements.txt
 
 COPY app ./app
-COPY phishcatch_url_model.pkl phishcatch_html_model.pkl ./
-COPY phishcatch_html_model.metadata.json ./
+COPY *.pkl *.metadata.json ./
 
 RUN addgroup --system app && adduser --system --ingroup app app \
+    && mkdir -p /app/data \
     && chown -R app:app /app
 
 USER app

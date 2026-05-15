@@ -43,8 +43,8 @@ def get_scanning_pipeline() -> ScanningPipeline:
             GoogleWebRiskScanner(api_key=settings.google_web_risk_api_key)
         )
 
-    # VirusTotal — key varsa ekle (opsiyonel, düşük limit)
-    if settings.virustotal_api_key:
+    # VirusTotal — key varsa ekle (opsiyonel, düşük limit; çoklu key ile 429 rotasyonu desteklenir)
+    if settings.virustotal_api_keys:
         threat_intel_scanners.append(VirusTotalScanner(settings=settings))
 
     scanners = [

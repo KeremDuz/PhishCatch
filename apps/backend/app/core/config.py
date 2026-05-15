@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from dotenv import load_dotenv
 
 
@@ -19,8 +19,42 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
 )
 
 
-def _csv_env(name: str, default: str) -> list[str]:
+def _csv_env(name: str, default: str = "") -> list[str]:
     return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
+
+
+def _dedupe_non_empty(values: list[str | None]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        clean_value = (value or "").strip()
+        if clean_value and clean_value not in seen:
+            deduped.append(clean_value)
+            seen.add(clean_value)
+    return deduped
+
+
+def _virustotal_api_keys_env() -> list[str]:
+    numbered_key_names = [
+        name
+        for name in os.environ
+        if name.startswith("VIRUSTOTAL_API_KEY")
+        and name.removeprefix("VIRUSTOTAL_API_KEY").isdigit()
+    ]
+    numbered_keys = [
+        os.environ[name]
+        for name in sorted(
+            numbered_key_names,
+            key=lambda value: int(value.removeprefix("VIRUSTOTAL_API_KEY")),
+        )
+    ]
+    return _dedupe_non_empty(
+        [
+            os.getenv("VIRUSTOTAL_API_KEY"),
+            *_csv_env("VIRUSTOTAL_API_KEYS"),
+            *numbered_keys,
+        ]
+    )
 
 
 def _bool_env(name: str, default: str = "0") -> bool:
@@ -34,7 +68,8 @@ class Settings(BaseModel):
         default_factory=lambda: _csv_env("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS)
     )
 
-    virustotal_api_key: str | None = Field(default_factory=lambda: os.getenv("VIRUSTOTAL_API_KEY"))
+    virustotal_api_key: str | None = Field(default_factory=lambda: os.getenv("VIRUSTOTAL_API_KEY") or None)
+    virustotal_api_keys: list[str] = Field(default_factory=_virustotal_api_keys_env)
     virustotal_timeout_seconds: int = int(os.getenv("VIRUSTOTAL_TIMEOUT_SECONDS", "10"))
 
     google_safe_browsing_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_SAFE_BROWSING_API_KEY"))
@@ -67,6 +102,17 @@ class Settings(BaseModel):
     training_admin_username: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_USERNAME") or None)
     training_admin_password: str | None = Field(default_factory=lambda: os.getenv("TRAINING_ADMIN_PASSWORD") or None)
     training_admin_session_ttl_seconds: int = int(os.getenv("TRAINING_ADMIN_SESSION_TTL_SECONDS", "28800"))
+
+    @model_validator(mode="after")
+    def normalize_virustotal_api_keys(self) -> "Settings":
+        self.virustotal_api_keys = _dedupe_non_empty(
+            [
+                self.virustotal_api_key,
+                *self.virustotal_api_keys,
+            ]
+        )
+        self.virustotal_api_key = self.virustotal_api_keys[0] if self.virustotal_api_keys else None
+        return self
 
 
 settings = Settings()

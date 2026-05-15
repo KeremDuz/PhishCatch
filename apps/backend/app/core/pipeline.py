@@ -356,8 +356,10 @@ class ScanningPipeline:
 
         elif scanner.name == "VirusTotalScanner":
             settings = getattr(scanner, "settings", None)
-            api_key_configured = bool(getattr(settings, "virustotal_api_key", None))
+            api_key_count = len(getattr(settings, "virustotal_api_keys", []) or [])
+            api_key_configured = api_key_count > 0
             details["api_key_configured"] = api_key_configured
+            details["api_key_count"] = api_key_count
             details["timeout_seconds"] = getattr(settings, "virustotal_timeout_seconds", None)
             status = "ok" if api_key_configured else "degraded"
 
