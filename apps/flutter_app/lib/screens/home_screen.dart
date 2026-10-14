@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../services/api_service.dart';
+import '../services/allsafe_api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import 'qr_scanner_screen.dart';
 import 'result_screen.dart';
+import 'connection_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +21,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final FocusNode _urlFocusNode = FocusNode();
   bool _isLoading = false;
   String? _errorMessage;
+  String? _pendingRequestId;
+  String? _pendingRequestUrl;
+  String? _pendingRequestSource;
+  String _inputSource = 'url';
 
   @override
   void initState() {
@@ -41,7 +46,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _analyzeUrl(String url) async {
+  Future<void> _analyzeUrl(String url, {String? source}) async {
+    final scanSource = source ?? _inputSource;
     if (url.trim().isEmpty) {
       setState(() => _errorMessage = 'Lutfen bir baglanti gir.');
       return;
@@ -53,7 +59,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final result = await PhishCatchApiService.analyzeUrl(url.trim());
+      if (_pendingRequestUrl != url.trim() ||
+          _pendingRequestSource != scanSource) {
+        _pendingRequestId = ApiService.newClientRequestId();
+        _pendingRequestUrl = url.trim();
+        _pendingRequestSource = scanSource;
+      }
+      final requestId = _pendingRequestId ??= ApiService.newClientRequestId();
+      final result = await ApiService.shared.analyzeUrl(
+        url.trim(),
+        source: scanSource,
+        clientRequestId: requestId,
+      );
+      _pendingRequestId = null;
+      _pendingRequestUrl = null;
+      _pendingRequestSource = null;
       if (!mounted) return;
       setState(() => _isLoading = false);
       Navigator.of(context).push(
@@ -82,7 +102,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        _errorMessage = e is ApiException
+            ? e.message
+            : 'Analiz sonucu okunamadi.';
       });
     }
   }
@@ -115,7 +137,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted || scannedValue == null) return;
     _urlController.text = scannedValue;
-    await _analyzeUrl(scannedValue);
+    _inputSource = 'qr';
+    await _analyzeUrl(scannedValue, source: 'qr');
   }
 
   @override
@@ -140,6 +163,29 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         _buildIdentity(isWide),
+                        const SizedBox(height: 12),
+                        AnimatedBuilder(
+                          animation: ApiService.shared,
+                          builder: (context, _) => TextButton.icon(
+                            onPressed: _isLoading
+                                ? null
+                                : () => Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => ConnectionScreen(
+                                        api: ApiService.shared,
+                                      ),
+                                    ),
+                                  ),
+                            icon: const Icon(Icons.settings_rounded, size: 18),
+                            label: Text(
+                              ApiService.shared.isAllsafe
+                                  ? ApiService.shared.isSignedIn
+                                        ? 'ALLSAFE: giris yapildi'
+                                        : 'ALLSAFE: giris gerekli'
+                                  : 'Baglanti: bagimsiz PhishCatch',
+                            ),
+                          ),
+                        ),
                         SizedBox(height: isWide ? 48 : 34),
                         _buildCommandSurface(isWide),
                         if (_errorMessage != null) ...[
@@ -326,6 +372,7 @@ class _HomeScreenState extends State<HomeScreen> {
         contentPadding: const EdgeInsets.symmetric(vertical: 18),
       ),
       onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
+      onChanged: (_) => _inputSource = 'url',
       enabled: !_isLoading,
       textInputAction: TextInputAction.search,
     );

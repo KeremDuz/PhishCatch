@@ -518,7 +518,13 @@ class _AdminScreenState extends State<AdminScreen> {
           onTap: () => _loadDetail(item),
         ),
         DataCell(_verdictPill(item.finalVerdict)),
-        DataCell(Text('${item.riskPercent.toStringAsFixed(1)}%')),
+        DataCell(
+          Text(
+            item.riskPercent == null
+                ? '—'
+                : '${item.riskPercent!.toStringAsFixed(1)}%',
+          ),
+        ),
         DataCell(Text('${item.stageCount}')),
         DataCell(
           Text(
@@ -581,7 +587,9 @@ class _AdminScreenState extends State<AdminScreen> {
                 _metricLine('Domain', detail.domain ?? '-'),
                 _metricLine(
                   'Risk',
-                  '${detail.riskPercent.toStringAsFixed(2)}%',
+                  detail.riskPercent == null
+                      ? '—'
+                      : '${detail.riskPercent!.toStringAsFixed(2)}%',
                 ),
                 _metricLine(
                   'URL feature',

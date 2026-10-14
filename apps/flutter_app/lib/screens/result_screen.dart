@@ -33,7 +33,9 @@ class _ResultScreenState extends State<ResultScreen> {
   String get _verdictTitle {
     if (widget.result.isMalicious) return 'Riskli baglanti';
     if (widget.result.isClean) return 'Guvenli gorunuyor';
-    return 'Emin degiliz';
+    return widget.result.scanStatus != 'complete'
+        ? 'Tarama tamamlanamadi'
+        : 'Emin degiliz';
   }
 
   String get _verdictDescription {
@@ -43,7 +45,9 @@ class _ResultScreenState extends State<ResultScreen> {
     if (widget.result.isClean) {
       return 'Belirgin bir risk sinyali bulunmadi.';
     }
-    return 'Sonuc net degil. Acmadan once dikkatli olmak iyi olur.';
+    return widget.result.scanStatus != 'complete'
+        ? 'Bazi kontroller tamamlanamadi. Bu sonuc baglantinin temiz oldugunu kanitlamaz.'
+        : 'Sonuc net degil. Acmadan once dikkatli olmak iyi olur.';
   }
 
   @override
@@ -256,7 +260,7 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  Widget _buildRiskRow(String label, double value, Color color) {
+  Widget _buildRiskRow(String label, double? value, Color color) {
     return Row(
       children: [
         SizedBox(
@@ -274,7 +278,7 @@ class _ResultScreenState extends State<ResultScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final width =
-                  constraints.maxWidth * (value / 100).clamp(0.0, 1.0);
+                  constraints.maxWidth * ((value ?? 0) / 100).clamp(0.0, 1.0);
               return Stack(
                 children: [
                   Container(
@@ -303,7 +307,7 @@ class _ResultScreenState extends State<ResultScreen> {
         SizedBox(
           width: 54,
           child: Text(
-            '${value.toStringAsFixed(1)}%',
+            value == null ? '—' : '${value.toStringAsFixed(1)}%',
             textAlign: TextAlign.right,
             style: GoogleFonts.firaCode(
               color: color,
@@ -375,7 +379,9 @@ class _ResultScreenState extends State<ResultScreen> {
   }
 
   Widget _buildStageItem(StageResult stage, bool isLast) {
-    final color = _stageColor(stage.verdict);
+    final color = _stageColor(
+      stage.status == 'completed' ? stage.verdict : 'unknown',
+    );
     return Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
       child: Row(
@@ -408,7 +414,9 @@ class _ResultScreenState extends State<ResultScreen> {
                       ),
                     ),
                     Text(
-                      _stageVerdictLabel(stage.verdict),
+                      stage.status == 'completed'
+                          ? _stageVerdictLabel(stage.verdict)
+                          : 'TAMAMLANMADI',
                       style: GoogleFonts.firaCode(
                         color: color,
                         fontSize: 11,

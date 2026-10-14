@@ -9,13 +9,15 @@ from app.main import app, health
 
 
 def main() -> int:
-    route_paths = {getattr(route, "path", None) for route in app.routes}
+    route_paths = set(app.openapi()["paths"])
     required_routes = {
         "/health",
         "/health/layers",
         "/api/v1/health/layers",
         "/api/v1/analyze",
         "/api/v1/analyze-file",
+        "/api/v1/integrations/allsafe/analyze",
+        "/api/v1/integrations/allsafe/health",
         "/api/v1/admin/observations",
         "/api/v1/admin/observations/{observation_id}",
         "/api/v1/admin/observations/{observation_id}/training-sample",

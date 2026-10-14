@@ -4,8 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8000 \
-    ML_MODEL_PATH=/app/phishcatch_url_model.pkl \
-    HTML_MODEL_PATH=/app/phishcatch_html_model.pkl
+    ML_MODEL_PATH=/app/models/phishcatch_url_model.pkl \
+    HTML_MODEL_PATH=/app/models/phishcatch_html_model.pkl
 
 WORKDIR /app
 
@@ -13,15 +13,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 whois \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install -r requirements.txt
+COPY requirements.lock .
+RUN pip install --require-hashes -r requirements.lock
 
 COPY app ./app
-COPY *.pkl *.metadata.json ./
 
 RUN addgroup --system app && adduser --system --ingroup app app \
-    && mkdir -p /app/data \
+    && mkdir -p /app/data /app/models \
     && chown -R app:app /app
 
 USER app

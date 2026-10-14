@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+import 'server_origin.dart';
 
 class AnalysisResult {
   final String url;
@@ -13,6 +16,9 @@ class AnalysisResult {
   final double? cleanProbability;
   final String decidedBy;
   final List<StageResult> stages;
+  final String contractVersion;
+  final String scanStatus;
+  final String? centralScanId;
 
   AnalysisResult({
     required this.url,
@@ -24,33 +30,85 @@ class AnalysisResult {
     this.cleanProbability,
     required this.decidedBy,
     required this.stages,
+    this.contractVersion = '2',
+    this.scanStatus = 'complete',
+    this.centralScanId,
   });
 
-  factory AnalysisResult.fromJson(Map<String, dynamic> json) {
+  factory AnalysisResult.fromJson(
+    Map<String, dynamic> json, {
+    String? scanStatusOverride,
+    String? centralScanId,
+  }) {
+    final contractVersion = json['contract_version'] as String? ?? '';
+    final scanStatus =
+        scanStatusOverride ?? json['scan_status'] as String? ?? 'failed';
+    final stages =
+        (json['stages'] as List<dynamic>?)
+            ?.whereType<Map>()
+            .map(
+              (stage) => StageResult.fromJson(Map<String, dynamic>.from(stage)),
+            )
+            .toList() ??
+        <StageResult>[];
+    final complete =
+        contractVersion == '2' &&
+        json['scan_status'] == 'complete' &&
+        scanStatus == 'complete' &&
+        stages.isNotEmpty &&
+        stages.every((stage) => stage.status == 'completed');
+    final rawVerdict = json['final_verdict'] as String? ?? 'unknown';
+    final verdict = rawVerdict == 'clean' && !complete ? 'unknown' : rawVerdict;
     return AnalysisResult(
       url: json['url'] ?? '',
       originalInput: json['original_input'],
       normalizedUrl: json['normalized_url'] ?? '',
-      finalVerdict: json['final_verdict'] ?? 'unknown',
-      confidence: (json['confidence'] as num?)?.toDouble(),
-      maliciousProbability: (json['malicious_probability'] as num?)?.toDouble(),
-      cleanProbability: (json['clean_probability'] as num?)?.toDouble(),
+      finalVerdict: verdict,
+      confidence: complete ? _probability(json['confidence']) : null,
+      maliciousProbability: complete
+          ? _probability(json['malicious_probability'])
+          : null,
+      cleanProbability: complete
+          ? _probability(json['clean_probability'])
+          : null,
       decidedBy: json['decided_by'] ?? '',
-      stages:
-          (json['stages'] as List<dynamic>?)
-              ?.map((s) => StageResult.fromJson(s))
-              .toList() ??
-          [],
+      stages: stages,
+      contractVersion: contractVersion,
+      scanStatus: complete
+          ? 'complete'
+          : scanStatus == 'complete'
+          ? 'partial'
+          : scanStatus,
+      centralScanId: centralScanId,
     );
   }
 
   bool get isMalicious => finalVerdict == 'malicious';
-  bool get isClean => finalVerdict == 'clean';
+  bool get isClean => finalVerdict == 'clean' && scanStatus == 'complete';
   bool get isUnknown => finalVerdict == 'unknown';
 
-  double get confidencePercent => (confidence ?? 0.0) * 100;
-  double get maliciousPercent => (maliciousProbability ?? 0.0) * 100;
-  double get cleanPercent => (cleanProbability ?? 0.0) * 100;
+  double? get confidencePercent =>
+      confidence == null ? null : confidence! * 100;
+  double? get maliciousPercent =>
+      maliciousProbability == null ? null : maliciousProbability! * 100;
+  double? get cleanPercent =>
+      cleanProbability == null ? null : cleanProbability! * 100;
+
+  factory AnalysisResult.unavailable(String url, {String? centralScanId}) =>
+      AnalysisResult(
+        url: url,
+        normalizedUrl: url,
+        finalVerdict: 'unknown',
+        decidedBy: '',
+        stages: [],
+        scanStatus: 'failed',
+        centralScanId: centralScanId,
+      );
+
+  static double? _probability(dynamic value) {
+    if (value is! num || !value.isFinite || value < 0 || value > 1) return null;
+    return value.toDouble();
+  }
 }
 
 class StageResult {
@@ -61,6 +119,7 @@ class StageResult {
   final double? cleanProbability;
   final String? reason;
   final Map<String, dynamic> details;
+  final String status;
 
   StageResult({
     required this.scanner,
@@ -70,6 +129,7 @@ class StageResult {
     this.cleanProbability,
     this.reason,
     required this.details,
+    this.status = 'completed',
   });
 
   factory StageResult.fromJson(Map<String, dynamic> json) {
@@ -81,6 +141,7 @@ class StageResult {
       cleanProbability: (json['clean_probability'] as num?)?.toDouble(),
       reason: json['reason'],
       details: Map<String, dynamic>.from(json['details'] ?? {}),
+      status: json['status'] as String? ?? 'unavailable',
     );
   }
 }
@@ -159,9 +220,11 @@ class BatchAnalysisItem {
   bool get isUnknown => finalVerdict == 'unknown';
   bool get isInvalid => finalVerdict == 'invalid';
 
-  double get riskPercent => ((riskScore ?? maliciousProbability ?? 0.0) * 100)
-      .clamp(0.0, 100.0)
-      .toDouble();
+  double? get riskPercent => riskScore == null && maliciousProbability == null
+      ? null
+      : ((riskScore ?? maliciousProbability!) * 100)
+            .clamp(0.0, 100.0)
+            .toDouble();
 }
 
 class BatchAnalysisResult {
@@ -245,9 +308,11 @@ class AdminObservationItem {
     );
   }
 
-  double get riskPercent => ((riskScore ?? maliciousProbability ?? 0.0) * 100)
-      .clamp(0.0, 100.0)
-      .toDouble();
+  double? get riskPercent => riskScore == null && maliciousProbability == null
+      ? null
+      : ((riskScore ?? maliciousProbability!) * 100)
+            .clamp(0.0, 100.0)
+            .toDouble();
 }
 
 class AdminObservationDetail extends AdminObservationItem {
@@ -475,6 +540,9 @@ class AdminLoginSession {
 }
 
 class PhishCatchApiService {
+  static const _allowDebugHttp = bool.fromEnvironment(
+    'PHISHCATCH_ALLOW_DEV_HTTP',
+  );
   static const String _configuredBaseUrl = String.fromEnvironment(
     'PHISHCATCH_API_BASE_URL',
   );
@@ -483,10 +551,14 @@ class PhishCatchApiService {
 
   static String get _baseUrl {
     if (_configuredBaseUrl.isNotEmpty) {
-      return _configuredBaseUrl;
+      final server = validateServerOrigin(
+        _configuredBaseUrl,
+        allowDevelopmentHttp: _allowDebugHttp,
+      );
+      return server.toString().replaceFirst(RegExp(r'/$'), '');
     }
 
-    if (kReleaseMode) {
+    if (!kDebugMode || !_allowDebugHttp) {
       return _productionBaseUrl;
     }
 
