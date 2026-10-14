@@ -1,12 +1,11 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib.util
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.core.risk_aggregator import RiskAggregator
 from app.core.scan_cache import ScannerResultCache
 from app.models.schemas import AnalyzeUrlResponse, StageResult
 from app.services.base_scanner import BaseScanner
-
 
 EXTERNAL_REPUTATION_SCANNERS = {
     "URLhausScanner",
@@ -40,12 +39,12 @@ class ScanningPipeline:
     def run(self, url: str, original_input: str | None = None) -> AnalyzeUrlResponse:
         stages: list[StageResult] = []
         current_url = url
-        fetch_safety_blocked = False
         external_reputation_blocked = False
         preprocessing_details: dict[str, object] = {}
 
         if self.redirect_resolver is not None:
             resolver_result = self._scan_with_cache(self.redirect_resolver, current_url)
+            stages.append(resolver_result)
             preprocessing_details = {
                 "redirect_resolver": {
                     "scanner": resolver_result.scanner,
@@ -56,19 +55,20 @@ class ScanningPipeline:
             }
 
             if resolver_result.details.get("safety"):
-                fetch_safety_blocked = True
-                external_reputation_blocked = self._should_skip_external_reputation(resolver_result)
+                external_reputation_blocked = self._should_skip_external_reputation(
+                    resolver_result
+                )
 
             resolved_url = resolver_result.details.get("resolved_url")
             if resolved_url and resolved_url != current_url:
                 current_url = resolved_url
 
-        threat_intel_stages = self._scan_threat_intelligence(current_url, external_reputation_blocked)
+        threat_intel_stages = self._scan_threat_intelligence(
+            current_url, external_reputation_blocked
+        )
         stages.extend(threat_intel_stages)
         malicious_reputation_stages = [
-            stage
-            for stage in threat_intel_stages
-            if stage.verdict == "malicious"
+            stage for stage in threat_intel_stages if stage.verdict == "malicious"
         ]
         if malicious_reputation_stages:
             return self._build_response(
@@ -82,19 +82,22 @@ class ScanningPipeline:
                         "layer": "threat_intelligence",
                         "reason": "At least one trusted reputation API returned malicious.",
                         "matched_scanners": [
-                            stage.scanner
-                            for stage in malicious_reputation_stages
+                            stage.scanner for stage in malicious_reputation_stages
                         ],
                     }
                 },
             )
 
         for scanner in self.scanners:
-            if external_reputation_blocked and scanner.name in EXTERNAL_REPUTATION_SCANNERS:
+            if (
+                external_reputation_blocked
+                and scanner.name in EXTERNAL_REPUTATION_SCANNERS
+            ):
                 stages.append(
                     StageResult(
                         scanner=scanner.name,
                         verdict="unknown",
+                        status="skipped",
                         risk_score=0.0,
                         reason="Skipped external reputation lookup because URL is not public-fetch safe",
                         details={"skipped": True, "skip_reason": "unsafe_url"},
@@ -107,12 +110,15 @@ class ScanningPipeline:
                     StageResult(
                         scanner=scanner.name,
                         verdict="unknown",
+                        status="skipped",
                         risk_score=0.0,
                         reason="Skipped HTML scan because earlier signals were confidently clean",
                         details={
                             "skipped": True,
                             "skip_reason": "confident_clean_prior_signals",
-                            "prior_risk_score": self.risk_aggregator.aggregate(stages).risk_score,
+                            "prior_risk_score": self.risk_aggregator.aggregate(
+                                stages
+                            ).risk_score,
                         },
                     )
                 )
@@ -120,16 +126,35 @@ class ScanningPipeline:
 
             stage_result = self._scan_with_cache(scanner, current_url)
             stages.append(stage_result)
-
-            if stage_result.details.get("safety"):
-                fetch_safety_blocked = True
+            html_model = stage_result.details.get("html_model")
+            if (
+                stage_result.scanner == "HtmlScraper"
+                and isinstance(html_model, dict)
+                and html_model.get("available") is False
+            ):
+                # Keep completed DOM rule evidence, while exposing the missing
+                # model component without duplicating its score or probabilities.
+                failed = bool(html_model.get("error"))
+                stages.append(
+                    StageResult(
+                        scanner="HtmlModelScanner",
+                        verdict="unknown",
+                        status="failed" if failed else "unavailable",
+                        reason="HTML model analysis failed"
+                        if failed
+                        else "HTML model unavailable",
+                        details={"component_of": "HtmlScraper"},
+                    )
+                )
 
             # Compatibility for custom pipelines that still include a resolver as a scanner.
             resolved_url = stage_result.details.get("resolved_url")
             if resolved_url and resolved_url != current_url:
                 current_url = resolved_url
 
-        return self._build_response(current_url, original_input, stages, preprocessing_details)
+        return self._build_response(
+            current_url, original_input, stages, preprocessing_details
+        )
 
     @staticmethod
     def _should_skip_external_reputation(resolver_result: StageResult) -> bool:
@@ -139,7 +164,9 @@ class ScanningPipeline:
 
         if safety.get("blocked_ips"):
             return True
-        if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+        if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+            ".localhost"
+        ):
             return True
         if "embedded credentials" in reason:
             return True
@@ -159,6 +186,16 @@ class ScanningPipeline:
         extra_signals: dict[str, object] | None = None,
     ) -> AnalyzeUrlResponse:
         decision = self.risk_aggregator.aggregate(stages)
+        completed = [
+            stage
+            for stage in stages
+            if stage.status == "completed" and stage.scanner != "UrlResolver"
+        ]
+        scan_status = (
+            "complete"
+            if stages and all(stage.status == "completed" for stage in stages)
+            else ("partial" if completed else "failed")
+        )
         signals = dict(decision.signals)
         if preprocessing_details:
             signals["preprocessing"] = preprocessing_details
@@ -166,6 +203,7 @@ class ScanningPipeline:
             signals.update(extra_signals)
 
         return AnalyzeUrlResponse(
+            scan_status=scan_status,
             url=current_url,
             original_input=original_input,
             normalized_url=current_url,
@@ -180,7 +218,9 @@ class ScanningPipeline:
             stages=stages,
         )
 
-    def _scan_threat_intelligence(self, url: str, skip_due_to_safety: bool) -> list[StageResult]:
+    def _scan_threat_intelligence(
+        self, url: str, skip_due_to_safety: bool
+    ) -> list[StageResult]:
         if not self.threat_intel_scanners:
             return []
 
@@ -189,6 +229,7 @@ class ScanningPipeline:
                 StageResult(
                     scanner=scanner.name,
                     verdict="unknown",
+                    status="skipped",
                     risk_score=0.0,
                     reason="Skipped external reputation lookup because URL is not public-fetch safe",
                     details={"skipped": True, "skip_reason": "unsafe_url"},
@@ -200,7 +241,9 @@ class ScanningPipeline:
             return [self._scan_with_cache(self.threat_intel_scanners[0], url)]
 
         results_by_index: dict[int, StageResult] = {}
-        with ThreadPoolExecutor(max_workers=len(self.threat_intel_scanners)) as executor:
+        with ThreadPoolExecutor(
+            max_workers=len(self.threat_intel_scanners)
+        ) as executor:
             future_to_scanner = {
                 executor.submit(self._scan_with_cache, scanner, url): (index, scanner)
                 for index, scanner in enumerate(self.threat_intel_scanners)
@@ -209,18 +252,18 @@ class ScanningPipeline:
                 index, scanner = future_to_scanner[future]
                 try:
                     results_by_index[index] = future.result()
-                except Exception as exc:
+                except Exception:
                     results_by_index[index] = StageResult(
                         scanner=scanner.name,
                         verdict="unknown",
+                        status="failed",
                         risk_score=0.0,
                         reason="Threat intelligence scan failed",
-                        details={"error": str(exc)},
+                        details={"error": "scanner_failed"},
                     )
 
         return [
-            results_by_index[index]
-            for index in range(len(self.threat_intel_scanners))
+            results_by_index[index] for index in range(len(self.threat_intel_scanners))
         ]
 
     def _scan_with_cache(self, scanner: BaseScanner, url: str) -> StageResult:
@@ -229,7 +272,46 @@ class ScanningPipeline:
             if cached is not None:
                 return cached
 
-        result = scanner.scan(url)
+        try:
+            result = scanner.scan(url)
+        except Exception:
+            result = StageResult(
+                scanner=scanner.name,
+                verdict="unknown",
+                status="failed",
+                reason="Scanner failed",
+                details={"error": "scanner_failed"},
+            )
+        if result.status == "completed" and result.verdict == "unknown":
+            reason = (result.reason or "").lower()
+            if result.details.get("skipped"):
+                result.status = "skipped"
+            elif result.details.get("error") or result.details.get("safety"):
+                result.status = "failed"
+                if result.details.get("error"):
+                    result.details["error"] = "scanner_failed"
+            elif (
+                isinstance(result.details.get("status_code"), int)
+                and result.details["status_code"] >= 400
+                and not (
+                    result.scanner == "VirusTotalScanner"
+                    and result.details["status_code"] == 404
+                )
+            ):
+                result.status = "failed"
+            elif any(
+                word in reason
+                for word in (
+                    "unavailable",
+                    "not configured",
+                    "not available",
+                    "missing",
+                    "disabled",
+                )
+            ):
+                result.status = "unavailable"
+            elif "timed out" in reason or "unexpected response" in reason:
+                result.status = "failed"
         if self.scan_cache is not None:
             self.scan_cache.set(scanner.name, url, result)
         return result
@@ -257,12 +339,19 @@ class ScanningPipeline:
         )
         has_blocking_or_suspicious_signal = any(
             stage.verdict == "malicious"
-            or (stage.risk_score is not None and stage.risk_score > self.html_skip_max_prior_risk)
+            or (
+                stage.risk_score is not None
+                and stage.risk_score > self.html_skip_max_prior_risk
+            )
             or bool(stage.details.get("safety"))
             for stage in stages
         )
 
-        return has_clean_url_heuristic and has_confident_clean_ml and not has_blocking_or_suspicious_signal
+        return (
+            has_clean_url_heuristic
+            and has_confident_clean_ml
+            and not has_blocking_or_suspicious_signal
+        )
 
     def health_report(self) -> dict[str, object]:
         layers: list[dict[str, object]] = []
@@ -278,8 +367,7 @@ class ScanningPipeline:
             )
 
         threat_intel_scanners = [
-            self._scanner_health(scanner)
-            for scanner in self.threat_intel_scanners
+            self._scanner_health(scanner) for scanner in self.threat_intel_scanners
         ]
         layers.append(
             {
@@ -291,10 +379,7 @@ class ScanningPipeline:
             }
         )
 
-        runtime_scanners = [
-            self._scanner_health(scanner)
-            for scanner in self.scanners
-        ]
+        runtime_scanners = [self._scanner_health(scanner) for scanner in self.scanners]
         layers.append(
             {
                 "layer": "local_analysis",
@@ -316,8 +401,12 @@ class ScanningPipeline:
                 "layer": "scanner_cache",
                 "status": "ok" if self.scan_cache is not None else "disabled",
                 "enabled": self.scan_cache is not None,
-                "ttl_seconds": self.scan_cache.ttl_seconds if self.scan_cache is not None else 0,
-                "max_entries": self.scan_cache.max_entries if self.scan_cache is not None else 0,
+                "ttl_seconds": self.scan_cache.ttl_seconds
+                if self.scan_cache is not None
+                else 0,
+                "max_entries": self.scan_cache.max_entries
+                if self.scan_cache is not None
+                else 0,
             }
         )
 
@@ -360,28 +449,43 @@ class ScanningPipeline:
             api_key_configured = api_key_count > 0
             details["api_key_configured"] = api_key_configured
             details["api_key_count"] = api_key_count
-            details["timeout_seconds"] = getattr(settings, "virustotal_timeout_seconds", None)
+            details["timeout_seconds"] = getattr(
+                settings, "virustotal_timeout_seconds", None
+            )
             status = "ok" if api_key_configured else "degraded"
 
         elif scanner.name == "MLModelScanner":
             settings = getattr(scanner, "settings", None)
             model_loaded = getattr(scanner, "model", None) is not None
             details["model_loaded"] = model_loaded
+            details["probabilities_available"] = hasattr(
+                getattr(scanner, "model", None), "predict_proba"
+            )
             details["model_path"] = getattr(settings, "ml_model_path", None)
             details["scaler_loaded"] = getattr(scanner, "scaler", None) is not None
-            details["malicious_threshold"] = getattr(settings, "ml_malicious_threshold", None)
-            status = "ok" if model_loaded else "degraded"
+            details["malicious_threshold"] = getattr(
+                settings, "ml_malicious_threshold", None
+            )
+            status = (
+                "ok"
+                if model_loaded and details["probabilities_available"]
+                else "degraded"
+            )
 
         elif scanner.name == "HtmlScraper":
             model_path = getattr(scanner, "model_path", None)
             model_loaded = getattr(scanner, "model", None) is not None
-            browser_render_enabled = bool(getattr(scanner, "browser_render_enabled", False))
+            browser_render_enabled = bool(
+                getattr(scanner, "browser_render_enabled", False)
+            )
             details["model_path"] = model_path
             details["model_loaded"] = model_loaded
             details["browser_render_enabled"] = browser_render_enabled
             details["browser_timeout_ms"] = getattr(scanner, "browser_timeout_ms", None)
             if browser_render_enabled:
-                playwright_available = importlib.util.find_spec("playwright") is not None
+                playwright_available = (
+                    importlib.util.find_spec("playwright") is not None
+                )
                 details["playwright_available"] = playwright_available
                 if not playwright_available:
                     status = "degraded"

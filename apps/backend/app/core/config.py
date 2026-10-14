@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from dotenv import load_dotenv
 
 
@@ -64,6 +64,10 @@ def _bool_env(name: str, default: str = "0") -> bool:
 class Settings(BaseModel):
     app_name: str = "PhishCatch Backend"
     app_version: str = "1.0.0"
+    allsafe_integration_key: SecretStr | None = Field(
+        default_factory=lambda: SecretStr(os.environ["ALLSAFE_INTEGRATION_KEY"])
+        if os.getenv("ALLSAFE_INTEGRATION_KEY", "").strip() else None
+    )
     cors_allowed_origins: list[str] = Field(
         default_factory=lambda: _csv_env("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS)
     )

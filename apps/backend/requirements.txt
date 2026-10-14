@@ -1,15 +1,2 @@
-requests
-pandas
-scikit-learn
-joblib
-fastapi
-uvicorn
-httpx
-python-dotenv
-python-multipart
-beautifulsoup4
-lxml
-python-dateutil
-playwright
-pytest
-tldextract
+# Compatibility entry point. Resolved dependencies are pinned in requirements.lock.
+-r requirements.lock

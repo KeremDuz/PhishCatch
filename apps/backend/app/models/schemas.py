@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.utils.url_utils import canonicalize_url, ensure_http_url
 
-
 Verdict = Literal["malicious", "clean", "unknown"]
 BatchVerdict = Literal["malicious", "clean", "unknown", "invalid"]
 
@@ -41,28 +40,46 @@ class AnalyzeUrlRequest(BaseModel):
 class StageResult(BaseModel):
     scanner: str
     verdict: Verdict
-    confidence: float | None = None
-    risk_score: float | None = None
-    malicious_probability: float | None = None
-    clean_probability: float | None = None
+    status: Literal["completed", "unavailable", "failed", "skipped"] = "completed"
+    confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    risk_score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    malicious_probability: float | None = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False
+    )
+    clean_probability: float | None = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False
+    )
     reason: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
     training_features: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 class AnalyzeUrlResponse(BaseModel):
+    contract_version: Literal["2"] = "2"
+    scan_status: Literal["complete", "partial", "failed"] = "complete"
+    observation_id: int | None = None
     url: str
     original_input: str | None = None
     normalized_url: str
     final_verdict: Verdict
-    confidence: float | None = None
-    risk_score: float | None = None
-    malicious_probability: float | None = None
-    clean_probability: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    risk_score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    malicious_probability: float | None = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False
+    )
+    clean_probability: float | None = Field(
+        default=None, ge=0, le=1, allow_inf_nan=False
+    )
     decided_by: str
     summary: str | None = None
     signals: dict[str, Any] = Field(default_factory=dict)
     stages: list[StageResult]
+
+
+class AllsafeAnalysisResponse(BaseModel):
+    analysis: AnalyzeUrlResponse
+    feature_version: Literal["phishcatch-v1"] = "phishcatch-v1"
+    features: dict[str, float] = Field(default_factory=dict)
 
 
 class BatchAnalyzeItem(BaseModel):

@@ -5,7 +5,6 @@ from typing import Literal
 
 from app.models.schemas import StageResult
 
-
 FinalVerdict = Literal["malicious", "clean", "unknown"]
 
 
@@ -27,9 +26,9 @@ class RiskEvidence:
 class RiskDecision:
     final_verdict: FinalVerdict
     risk_score: float
-    confidence: float
-    malicious_probability: float
-    clean_probability: float
+    confidence: float | None
+    malicious_probability: float | None
+    clean_probability: float | None
     summary: str
     signals: dict[str, object] = field(default_factory=dict)
 
@@ -64,36 +63,82 @@ class RiskAggregator:
 
         if risk_score >= self.MALICIOUS_THRESHOLD:
             final_verdict: FinalVerdict = "malicious"
-        elif positive and risk_score >= self.UNKNOWN_THRESHOLD:
+        elif (
+            positive
+            and risk_score >= self.UNKNOWN_THRESHOLD
+            or not stages
+            or any(stage.status != "completed" for stage in stages)
+            or all(
+                stage.verdict == "unknown" or stage.scanner == "UrlResolver"
+                for stage in stages
+            )
+        ):
             final_verdict = "unknown"
         else:
             final_verdict = "clean"
-        confidence = self._confidence(final_verdict, risk_score)
+        # The combined rule score has no calibrated probability or confidence.
+        # Preserve real URL-model probabilities separately from the final verdict.
+        probability_stage = next(
+            (
+                stage
+                for stage in stages
+                if stage.scanner == "MLModelScanner"
+                and stage.status == "completed"
+                and stage.malicious_probability is not None
+                and stage.clean_probability is not None
+            ),
+            None,
+        )
 
         strongest_positive = max(positive, key=lambda item: item.score, default=None)
         strongest_negative = max(negative, key=lambda item: item.score, default=None)
-        summary = self._summary(final_verdict, risk_score, strongest_positive, strongest_negative)
+        summary = self._summary(
+            final_verdict, risk_score, strongest_positive, strongest_negative
+        )
 
         return RiskDecision(
             final_verdict=final_verdict,
             risk_score=round(risk_score, 4),
-            confidence=round(confidence, 4),
-            malicious_probability=round(risk_score, 4),
-            clean_probability=round(1 - risk_score, 4),
+            confidence=None,
+            malicious_probability=probability_stage.malicious_probability
+            if probability_stage
+            else None,
+            clean_probability=probability_stage.clean_probability
+            if probability_stage
+            else None,
             summary=summary,
             signals={
                 "malicious_threshold": self.MALICIOUS_THRESHOLD,
                 "unknown_threshold": self.UNKNOWN_THRESHOLD,
-                "positive": [evidence.as_dict() for evidence in sorted(positive, key=lambda item: item.score, reverse=True)],
-                "negative": [evidence.as_dict() for evidence in sorted(negative, key=lambda item: item.score, reverse=True)],
+                "probability_source": probability_stage.scanner
+                if probability_stage
+                else None,
+                "positive": [
+                    evidence.as_dict()
+                    for evidence in sorted(
+                        positive, key=lambda item: item.score, reverse=True
+                    )
+                ],
+                "negative": [
+                    evidence.as_dict()
+                    for evidence in sorted(
+                        negative, key=lambda item: item.score, reverse=True
+                    )
+                ],
             },
         )
 
-    def _score_stage(self, stage: StageResult) -> tuple[RiskEvidence | None, RiskEvidence | None]:
+    def _score_stage(
+        self, stage: StageResult
+    ) -> tuple[RiskEvidence | None, RiskEvidence | None]:
         reason = stage.reason or f"{stage.scanner} returned {stage.verdict}"
+        if stage.status != "completed":
+            return None, None
 
         if stage.scanner in self.THREAT_INTEL_SCANNERS and stage.verdict == "malicious":
-            score = self._clamp(stage.risk_score or stage.confidence or 0.95, minimum=0.75)
+            score = self._clamp(
+                stage.risk_score or stage.confidence or 0.95, minimum=0.75
+            )
             return RiskEvidence(stage.scanner, score, reason), None
 
         if stage.scanner == "UrlResolver":
@@ -110,45 +155,56 @@ class RiskAggregator:
 
         if stage.verdict == "malicious":
             score = stage.risk_score or stage.confidence or 0.7
-            return RiskEvidence(stage.scanner, self._clamp(score, minimum=0.6), reason), None
+            return RiskEvidence(
+                stage.scanner, self._clamp(score, minimum=0.6), reason
+            ), None
 
         if stage.risk_score is not None and stage.risk_score > 0:
-            return RiskEvidence(stage.scanner, self._clamp(stage.risk_score), reason), None
+            return RiskEvidence(
+                stage.scanner, self._clamp(stage.risk_score), reason
+            ), None
 
         if stage.verdict == "clean":
             return None, RiskEvidence(stage.scanner, 0.03, reason)
 
         return None, None
 
-    def _score_url_resolver(self, stage: StageResult, reason: str) -> tuple[RiskEvidence | None, RiskEvidence | None]:
+    def _score_url_resolver(
+        self, stage: StageResult, reason: str
+    ) -> tuple[RiskEvidence | None, RiskEvidence | None]:
         safety = stage.details.get("safety") or {}
         if safety:
-            hostname = safety.get("hostname", "")
-            blocked_ips = safety.get("blocked_ips", [])
-            if blocked_ips or hostname in {"localhost", "localhost.localdomain"}:
-                return RiskEvidence(stage.scanner, 0.9, reason), None
-            return RiskEvidence(stage.scanner, 0.35, reason), None
+            # Fetch restrictions are missing evidence, not phishing evidence.
+            return None, None
 
         redirect_chain = stage.details.get("redirect_chain") or []
         if len(redirect_chain) >= 4:
             return RiskEvidence(stage.scanner, 0.2, "Long redirect chain"), None
 
         if stage.risk_score is not None and stage.risk_score > 0:
-            return RiskEvidence(stage.scanner, self._clamp(stage.risk_score), reason), None
+            return RiskEvidence(
+                stage.scanner, self._clamp(stage.risk_score), reason
+            ), None
 
-        return None, RiskEvidence(stage.scanner, 0.03, reason)
+        return None, None
 
-    def _score_whois(self, stage: StageResult, reason: str) -> tuple[RiskEvidence | None, RiskEvidence | None]:
+    def _score_whois(
+        self, stage: StageResult, reason: str
+    ) -> tuple[RiskEvidence | None, RiskEvidence | None]:
         signal = stage.details.get("signal")
         if signal == "direct_ip":
             return RiskEvidence(stage.scanner, 0.55, reason), None
         if signal == "new_domain":
-            return RiskEvidence(stage.scanner, self._clamp(stage.risk_score or 0.45), reason), None
+            return RiskEvidence(
+                stage.scanner, self._clamp(stage.risk_score or 0.45), reason
+            ), None
         if signal == "established_domain" or stage.verdict == "clean":
             return None, RiskEvidence(stage.scanner, 0.05, reason)
         return None, None
 
-    def _score_ml(self, stage: StageResult, reason: str) -> tuple[RiskEvidence | None, RiskEvidence | None]:
+    def _score_ml(
+        self, stage: StageResult, reason: str
+    ) -> tuple[RiskEvidence | None, RiskEvidence | None]:
         probability = stage.malicious_probability
         if probability is None:
             return None, None
@@ -171,15 +227,9 @@ class RiskAggregator:
             return None, None
         return None, RiskEvidence(stage.scanner, clean_strength, reason)
 
-    def _score_html(self, stage: StageResult, reason: str) -> tuple[RiskEvidence | None, RiskEvidence | None]:
-        error = str(stage.details.get("error") or "").lower()
-        if stage.verdict == "unknown" and "hostname could not be resolved" in error:
-            return RiskEvidence(
-                stage.scanner,
-                0.45,
-                "HTML content could not be verified because the hostname could not be resolved",
-            ), None
-
+    def _score_html(
+        self, stage: StageResult, reason: str
+    ) -> tuple[RiskEvidence | None, RiskEvidence | None]:
         threat_score = stage.risk_score
         if threat_score is None:
             threat_score = stage.details.get("threat_score")
@@ -188,11 +238,15 @@ class RiskAggregator:
 
         threat_score = float(threat_score)
         if threat_score >= self.HTML_SIGNAL_THRESHOLD:
-            return RiskEvidence(stage.scanner, self._html_evidence_score(threat_score), reason), None
+            return RiskEvidence(
+                stage.scanner, self._html_evidence_score(threat_score), reason
+            ), None
 
         return None, RiskEvidence(stage.scanner, 0.1, reason)
 
-    def _negative_offset(self, positive: list[RiskEvidence], negative: list[RiskEvidence]) -> float:
+    def _negative_offset(
+        self, positive: list[RiskEvidence], negative: list[RiskEvidence]
+    ) -> float:
         raw_offset = min(0.45, sum(evidence.score for evidence in negative))
         if raw_offset <= 0:
             return 0.0
@@ -205,21 +259,26 @@ class RiskAggregator:
             return 0.0
 
         has_strong_local_hit = any(
-            evidence.scanner in {"HtmlScraper", "MLModelScanner", "URLHeuristicScanner"} and evidence.score >= 0.6
+            evidence.scanner in {"HtmlScraper", "MLModelScanner", "URLHeuristicScanner"}
+            and evidence.score >= 0.6
             for evidence in positive
         )
         if has_strong_local_hit:
             return min(0.05, raw_offset)
 
         has_moderate_non_html_hit = any(
-            evidence.scanner not in {"UrlResolver", "HtmlScraper"} and evidence.score >= 0.4
+            evidence.scanner not in {"UrlResolver", "HtmlScraper"}
+            and evidence.score >= 0.4
             for evidence in positive
         )
         if has_moderate_non_html_hit:
             return min(0.04, raw_offset)
 
         has_multiple_local_hits = (
-            len([evidence for evidence in positive if evidence.scanner != "UrlResolver"]) >= 2
+            len(
+                [evidence for evidence in positive if evidence.scanner != "UrlResolver"]
+            )
+            >= 2
             and max((evidence.score for evidence in positive), default=0.0) >= 0.35
         )
         if has_multiple_local_hits:
@@ -249,20 +308,6 @@ class RiskAggregator:
     def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
         return max(minimum, min(maximum, value))
 
-    @classmethod
-    def _confidence(cls, final_verdict: FinalVerdict, risk_score: float) -> float:
-        if final_verdict == "malicious":
-            distance = (risk_score - cls.MALICIOUS_THRESHOLD) / (1 - cls.MALICIOUS_THRESHOLD)
-        elif final_verdict == "unknown":
-            band_width = cls.MALICIOUS_THRESHOLD - cls.UNKNOWN_THRESHOLD
-            midpoint = cls.UNKNOWN_THRESHOLD + (band_width / 2)
-            distance = 1 - (abs(risk_score - midpoint) / max(band_width / 2, 0.01))
-            return cls._clamp(0.55 + (distance * 0.15))
-        else:
-            distance = (cls.UNKNOWN_THRESHOLD - risk_score) / cls.UNKNOWN_THRESHOLD
-
-        return cls._clamp(0.5 + (distance * 0.5))
-
     @staticmethod
     def _summary(
         final_verdict: FinalVerdict,
@@ -278,7 +323,7 @@ class RiskAggregator:
         if final_verdict == "unknown":
             if strongest_positive:
                 return f"Suspicious phishing signals found: {strongest_positive.reason}"
-            return "Suspicious phishing signals found; result needs review."
+            return "Analysis is incomplete or inconclusive; a clean result could not be established."
 
         if strongest_negative and risk_score < 0.25:
             return f"No strong phishing signal found: {strongest_negative.reason}"

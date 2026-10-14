@@ -136,3 +136,7 @@ Eski ayrık artifact seti kullanılıyorsa `.env` içinde `ML_MODEL_PATH=phishca
 ## Yerel Artifact Notları
 
 `Mendeley_dataset/`, generated CSV sonuçları, `.venv/`, `apps/flutter_app/.dart_tool/` ve `apps/flutter_app/build/` yerel/üretilen artifact olarak görülmelidir. Proje zip ile paylaşılacaksa gerçek `apps/backend/.env` ve çalışan model dosyaları klasörde kalmalı; büyük eğitim veri seti ve sanal ortam zip dışında bırakılmalıdır.
+
+## ALLSAFE bağlantısı
+
+İsteğe bağlı kurum modu, merkezi tarama kayıtları ve analiz sözleşmesi sürüm 2 için [backend bağlantı belgesi](apps/backend/README.md) ve [mobil kullanım belgesi](apps/flutter_app/README.md) incelenmelidir. Model tahmini, doğrulanmış etiket ve eğitim onayı ayrı kalır.

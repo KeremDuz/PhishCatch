@@ -30,6 +30,7 @@ class MLModelScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                status="unavailable",
                 risk_score=None,
                 reason="ML model unavailable (not found or failed to load)",
                 details={"model_path": self.settings.ml_model_path},
@@ -43,6 +44,7 @@ class MLModelScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                status="failed",
                 risk_score=None,
                 reason="ML model prediction failed",
                 details={
@@ -201,8 +203,12 @@ class MLModelScanner(BaseScanner):
 
     def _predict_confidence(self, model_input: pd.DataFrame | Iterable[Iterable[float]]) -> float:
         if hasattr(self.model, "predict_proba"):
+            classes = list(getattr(self.model, "classes_", []))
+            if len(classes) != 2 or set(classes) != {0, 1}:
+                raise ValueError("Model requires explicit clean=0 and malicious=1 classes")
             probabilities = self.model.predict_proba(model_input)
-            return float(probabilities[0][1])
-
-        prediction = int(self.model.predict(model_input)[0])
-        return float(prediction)
+            probability = float(probabilities[0][classes.index(1)])
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError("Model probability is invalid")
+            return probability
+        raise ValueError("Model does not provide probabilities")

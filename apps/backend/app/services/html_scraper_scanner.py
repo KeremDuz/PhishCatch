@@ -383,14 +383,21 @@ class HtmlScraperScanner(BaseScanner):
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
             response, final_url, redirect_chain = self._safe_get(url, headers=headers)
+            try:
+                response.raise_for_status()
+            except requests.RequestException:
+                response.close()
+                raise
             parsed_url = urlparse(final_url)
             base_domain = parsed_url.netloc
 
             content_type = response.headers.get("Content-Type", "")
             if "text/html" not in content_type:
+                response.close()
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    status="unavailable",
                     risk_score=0.0,
                     reason="Target is not a valid HTML page",
                 )
@@ -400,11 +407,23 @@ class HtmlScraperScanner(BaseScanner):
             for chunk in response.iter_content(chunk_size=1024 * 100):
                 html_bytes += chunk
                 if len(html_bytes) > 1024 * 1024:
-                    break
+                    response.close()
+                    return StageResult(
+                        scanner=self.name, verdict="unknown", status="failed",
+                        reason="HTML content exceeds the analysis size limit",
+                        details={"error": "html_too_large"},
+                    )
+            response.close()
 
             raw_html = html_bytes.decode("utf-8", errors="ignore")
             soup = BeautifulSoup(raw_html, "lxml")
             browser_render = self._maybe_render_html(final_url, raw_html, soup)
+            if self._should_try_browser_render(raw_html, soup) and not browser_render.available:
+                return StageResult(
+                    scanner=self.name, verdict="unknown", status="unavailable",
+                    reason="Dynamic HTML content could not be verified",
+                    details={"browser_render": browser_render.as_dict(), "final_url": final_url},
+                )
             if browser_render.available and browser_render.html:
                 raw_html = browser_render.html
                 final_url = browser_render.final_url or final_url
@@ -635,13 +654,14 @@ class HtmlScraperScanner(BaseScanner):
                     training_features={"html_features": html_training_features} if html_training_features else {},
                 )
 
-        except Exception as e:
+        except Exception:
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                status="failed",
                 risk_score=None,
                 reason="Failed to scrape HTML content",
-                details={"error": str(e)},
+                details={"error": "html_scan_failed"},
             )
 
     def _maybe_render_html(self, final_url: str, raw_html: str, soup: BeautifulSoup) -> BrowserRenderResult:
@@ -851,7 +871,12 @@ class HtmlScraperScanner(BaseScanner):
             }
 
         try:
-            probability = float(self.model.predict_proba(features)[0][1])
+            classes = list(getattr(self.model, "classes_", []))
+            if len(classes) != 2 or set(classes) != {0, 1}:
+                raise ValueError("HTML model requires clean=0 and malicious=1 classes")
+            probability = float(self.model.predict_proba(features)[0][classes.index(1)])
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError("HTML model probability is invalid")
             model_risk_score = self._model_probability_to_risk(probability)
             return {
                 "available": True,

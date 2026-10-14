@@ -346,7 +346,9 @@ class BatchResultScreen extends StatelessWidget {
             SizedBox(
               width: 56,
               child: Text(
-                '${item.riskPercent.toStringAsFixed(0)}%',
+                item.riskPercent == null
+                    ? '—'
+                    : '${item.riskPercent!.toStringAsFixed(0)}%',
                 textAlign: TextAlign.right,
                 style: GoogleFonts.firaCode(
                   color: color,
