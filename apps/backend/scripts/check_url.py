@@ -28,8 +28,11 @@ def _print_compact_result(payload: dict) -> None:
         "input": payload.get("original_input") or payload.get("url"),
         "normalized_url": payload.get("normalized_url") or payload.get("url"),
         "verdict": payload.get("final_verdict"),
+        "risk_score": payload.get("risk_score"),
+        "confidence": payload.get("confidence"),
         "malicious_probability": payload.get("malicious_probability"),
         "decided_by": payload.get("decided_by"),
+        "summary": payload.get("summary"),
     }
     print(json.dumps(compact, indent=2, ensure_ascii=False))
 

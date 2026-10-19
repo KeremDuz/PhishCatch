@@ -1,0 +1,3 @@
+-r requirements.in
+-c requirements.lock
+pytest>=8.3,<10

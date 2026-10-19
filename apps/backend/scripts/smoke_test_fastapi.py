@@ -1,24 +1,46 @@
 from pathlib import Path
 import sys
 
-from fastapi.testclient import TestClient
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.main import app
+from app.main import app, health
+
+
+def main() -> int:
+    route_paths = set(app.openapi()["paths"])
+    required_routes = {
+        "/health",
+        "/health/layers",
+        "/api/v1/health/layers",
+        "/api/v1/analyze",
+        "/api/v1/analyze-file",
+        "/api/v1/integrations/allsafe/analyze",
+        "/api/v1/integrations/allsafe/health",
+        "/api/v1/admin/observations",
+        "/api/v1/admin/observations/{observation_id}",
+        "/api/v1/admin/observations/{observation_id}/training-sample",
+        "/api/v1/admin/observations/bulk-training-samples",
+        "/api/v1/admin/training-samples",
+        "/api/v1/admin/training-samples/import",
+    }
+    missing_routes = sorted(required_routes - route_paths)
+
+    if missing_routes:
+        print("Missing routes:", ", ".join(missing_routes))
+        return 1
+
+    health_payload = health()
+    if health_payload != {"status": "ok"}:
+        print("Unexpected health payload:", health_payload)
+        return 1
+
+    print("FastAPI app sanity check passed")
+    print("Routes:", ", ".join(sorted(required_routes)))
+    print("Health:", health_payload)
+    return 0
 
 
 if __name__ == "__main__":
-    client = TestClient(app)
-
-    health_response = client.get("/health")
-    print("/health ->", health_response.status_code, health_response.json())
-
-    analyze_response = client.post(
-        "/api/v1/analyze",
-        json={"url": "https://secure-login-example.com/verify-account"},
-    )
-    print("/api/v1/analyze ->", analyze_response.status_code)
-    print(analyze_response.json())
+    raise SystemExit(main())

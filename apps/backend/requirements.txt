@@ -1,8 +1,2 @@
-requests
-pandas
-scikit-learn
-joblib
-fastapi
-uvicorn
-httpx
-python-dotenv
+# Compatibility entry point. Resolved dependencies are pinned in requirements.lock.
+-r requirements.lock

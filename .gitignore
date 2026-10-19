@@ -1,5 +1,50 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.vscode/
 .env
+.codex
 apps/backend/phishcatch_rf_model.pkl
+apps/backend/Mendeley_dataset
+apps/backend/phishcatch_scaler.pkl
+apps/backend/phishcatch_champion_model.pkl
+apps/backend/phishcatch_url_model.pkl
+apps/backend/phishcatch_html_model*.pkl
+apps/backend/phishcatch_html_model*.metadata.json
+
+# Generated model artifacts and datasets
+apps/backend/balanced_urls.csv
+apps/backend/*.arff
+apps/backend/phishcatch_rf_model_*.pkl
+apps/backend/phishcatch_scaler_*.pkl
+apps/backend/phishcatch_training_data_*.csv
+apps/backend/Arttırımlı_*_ML.pkl
+apps/backend/Arttırımlı_*_ML.metadata.json
+apps/backend/Arttırımlı_*_training_features.csv
+apps/backend/data/*.csv
+
+# Generated benchmark / feed outputs
+apps/backend/feed*_results.json
+apps/backend/feed_*_results.csv
+apps/backend/feed_*_results*.json
+apps/backend/feed_*_results*.csv
+apps/backend/feed_*_review_*.csv
+apps/backend/model_benchmark_summary.csv
+apps/backend/data/*.sqlite3
+apps/backend/data/*.sqlite3-*
+apps/backend/generated/
+apps/backend/models/
+
+# Local scratch/test input files
+apps/backend/feed1.txt
+
+# Flutter / Android local build and signing artifacts
+apps/flutter_app/.dart_tool/
+apps/flutter_app/build/
+apps/flutter_app/android/key.properties
+apps/flutter_app/android/*.jks
+apps/flutter_app/android/*.keystore
