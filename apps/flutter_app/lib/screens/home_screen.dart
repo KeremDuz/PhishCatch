@@ -1,8 +1,13 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/allsafe_api_service.dart';
+import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import 'batch_result_screen.dart';
 import 'connection_screen.dart';
 import 'history_screen.dart';
 import 'qr_scanner_screen.dart';
@@ -10,7 +15,13 @@ import 'result_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final ApiService? api;
-  const HomeScreen({super.key, this.api});
+  final FilePicker? filePicker;
+  final Future<BatchAnalysisResult> Function({
+    required Uint8List bytes,
+    required String filename,
+  })?
+  analyzeUrlFile;
+  const HomeScreen({super.key, this.api, this.filePicker, this.analyzeUrlFile});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -19,12 +30,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final _urlController = TextEditingController();
   final _urlFocusNode = FocusNode();
   bool _isLoading = false;
+  bool _isBatchLoading = false;
   String? _errorMessage;
   String? _pendingRequestId;
   String? _pendingRequestUrl;
   String? _pendingRequestSource;
   String _inputSource = 'url';
   ApiService get _api => widget.api ?? ApiService.shared;
+  bool get _canUseStandalone => !_api.isAllsafe && !_api.managedOnly;
+  static const _maxBatchBytes = 512 * 1024;
 
   @override
   void dispose() {
@@ -99,6 +113,82 @@ class _HomeScreenState extends State<HomeScreen> {
     _urlController.text = value;
     _inputSource = 'qr';
     await _analyzeUrl(value, source: 'qr');
+  }
+
+  Future<void> _pickAndAnalyzeFile() async {
+    if (_isLoading || !_canUseStandalone) return;
+    setState(() {
+      _isLoading = _isBatchLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      final picked = await (widget.filePicker ?? FilePicker.platform).pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['txt', 'csv'],
+        allowMultiple: false,
+        withData: false,
+        withReadStream: true,
+      );
+      if (!mounted ||
+          !_canUseStandalone ||
+          picked == null ||
+          picked.files.isEmpty) {
+        return;
+      }
+      final file = picked.files.single;
+      if (!const ['txt', 'csv'].contains(file.extension?.toLowerCase())) {
+        throw const ApiException(
+          'TXT veya CSV biçiminde bir URL listesi seçin.',
+        );
+      }
+      if (file.size > _maxBatchBytes) {
+        throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+      }
+      final content = BytesBuilder(copy: false);
+      if (file.bytes != null) {
+        if (file.bytes!.length > _maxBatchBytes) {
+          throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+        }
+        content.add(file.bytes!);
+      } else if (file.readStream != null) {
+        await for (final chunk in file.readStream!) {
+          if (!mounted || !_canUseStandalone) return;
+          if (content.length + chunk.length > _maxBatchBytes) {
+            throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+          }
+          content.add(chunk);
+        }
+      } else {
+        throw const ApiException('Dosya okunamadı. Başka bir dosya seçin.');
+      }
+      if (content.isEmpty) throw const ApiException('Seçilen dosya boş.');
+      if (!mounted || !_canUseStandalone) return;
+      final analyze =
+          widget.analyzeUrlFile ?? PhishCatchApiService.analyzeUrlFile;
+      final result = await analyze(
+        bytes: content.takeBytes(),
+        filename: file.name,
+      );
+      if (!mounted || !_canUseStandalone) return;
+      setState(() => _isLoading = _isBatchLoading = false);
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => BatchResultScreen(result: result),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _errorMessage = error is ApiException
+              ? error.message
+              : 'Toplu analiz tamamlanamadı. Dosyayı ve sunucu bağlantısını kontrol edin.',
+        );
+      }
+    } finally {
+      if (mounted && _isBatchLoading) {
+        setState(() => _isLoading = _isBatchLoading = false);
+      }
+    }
   }
 
   @override
@@ -334,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 22),
         FilledButton.icon(
           onPressed: _isLoading ? null : () => _analyzeUrl(_urlController.text),
-          icon: _isLoading
+          icon: _isLoading && !_isBatchLoading
               ? const SizedBox(
                   width: 18,
                   height: 18,
@@ -344,7 +434,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 )
               : const Icon(Icons.search_outlined, size: 20),
-          label: Text(_isLoading ? 'Analiz ediliyor…' : 'Bağlantıyı analiz et'),
+          label: Text(
+            _isLoading && !_isBatchLoading
+                ? 'Analiz ediliyor…'
+                : 'Bağlantıyı analiz et',
+          ),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
@@ -356,9 +450,11 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
           Semantics(
             liveRegion: true,
-            child: const Text(
-              'Sunucudan sonuç bekleniyor. Bu işlem bağlantıya göre zaman alabilir.',
-              style: TextStyle(
+            child: Text(
+              _isBatchLoading
+                  ? 'Dosya seçimi ve analizi sürüyor. Bu işlem bağlantıya göre zaman alabilir.'
+                  : 'Sunucudan sonuç bekleniyor. Bu işlem bağlantıya göre zaman alabilir.',
+              style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 13,
                 height: 1.5,
@@ -379,6 +475,43 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Divider(height: 1),
         ),
         _connectionSummary(),
+        if (_canUseStandalone) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Divider(height: 1),
+          ),
+          OutlinedButton.icon(
+            onPressed: _isLoading ? null : _pickAndAnalyzeFile,
+            icon: _isBatchLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.upload_file_outlined, size: 20),
+            label: Text(
+              _isBatchLoading ? 'Dosya işleniyor…' : 'Toplu URL analizi',
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'TXT / CSV URL listesi · En fazla 512 KB',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: _isLoading
+                ? null
+                : () => Navigator.of(context).pushNamed('/admin'),
+            icon: const Icon(Icons.admin_panel_settings_outlined, size: 18),
+            label: const Text('Bağımsız yönetim'),
+          ),
+        ],
       ],
     ),
   );
