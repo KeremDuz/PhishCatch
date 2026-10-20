@@ -5,21 +5,30 @@ from app.services.base_scanner import BaseScanner
 
 
 class UrlhausScanner(BaseScanner):
-    """abuse.ch URLhaus — query endpoint can be used without an API key.
+    """abuse.ch URLhaus queries require an Auth-Key.
     
     Malware URL veritabanı. Bilinen kötücül URL'leri kontrol eder.
-    https://urlhaus-api.abuse.ch/
+    Authentication: https://urlhaus.abuse.ch/api/
     """
 
     API_URL = "https://urlhaus-api.abuse.ch/v1/url/"
 
     def __init__(self, auth_key: str | None = None) -> None:
         super().__init__(name="URLhausScanner")
-        self.auth_key = auth_key
+        self.auth_key = (auth_key or "").strip() or None
 
     def scan(self, url: str) -> StageResult:
+        if not self.auth_key:
+            return StageResult(
+                scanner=self.name,
+                verdict="unknown",
+                status="unavailable",
+                risk_score=None,
+                reason="URLHAUS_AUTH_KEY is required but not configured",
+                details={"auth_key_required": True, "auth_key_configured": False},
+            )
         try:
-            headers = {"Auth-Key": self.auth_key} if self.auth_key else {}
+            headers = {"Auth-Key": self.auth_key}
             response = requests.post(
                 self.API_URL,
                 data={"url": url},

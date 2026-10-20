@@ -41,7 +41,7 @@ Push-Location $appRoot
 try {
     & $FlutterExecutable pub get --enforce-lockfile
     if ($LASTEXITCODE -ne 0) { throw 'Flutter dependency resolution failed.' }
-    & $FlutterExecutable build apk --release '--dart-define=ALLSAFE_MANAGED_MODE=true' "--dart-define=ALLSAFE_API_BASE_URL=$serverOrigin"
+    & $FlutterExecutable build apk --release --no-pub '--dart-define=ALLSAFE_MANAGED_MODE=true' "--dart-define=ALLSAFE_API_BASE_URL=$serverOrigin"
     if ($LASTEXITCODE -ne 0) { throw 'Signed Android release build failed.' }
     $apkPath = Join-Path $appRoot 'build/app/outputs/flutter-apk/app-release.apk'
     if (![string]::IsNullOrWhiteSpace($OutputDirectory)) {

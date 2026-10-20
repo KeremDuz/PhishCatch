@@ -42,4 +42,6 @@ Android APK ve iOS derlemesi icin ilgili platform araclari ayrica gerekir. Mock 
 
 Özel sunucuya telefondan erişmek için aynı tailnet'te Tailscale açık olmalıdır; ayrıca ALLSAFE hesabıyla giriş gerekir. Sunucu entegrasyon anahtarı, modeller ve dış servis anahtarları istemciye eklenmez. Yönetilen profil ham upstream toplu analiz/eğitim API'lerini yayımlamaz; bu ekranlar bağımsız mod için kaynakta korunur, kurum inceleme ve eğitim onayı ALLSAFE yönetim panelindedir.
 
+URLhaus sorguları için backend ortamında `URLHAUS_AUTH_KEY` gereklidir; [resmî URLhaus belgesi](https://urlhaus.abuse.ch/api/) anahtar edinme adımlarını açıklar. Anahtar APK/web derlemesine gömülmez. Anahtar yoksa URLhaus'a ağ isteği gönderilmez, katman `unavailable`, sağlık bilgisi `degraded` olur; bu durum temiz sonuç sayılmaz. Anahtar yapılandırılmış olsa da yanlış/iptal edilmiş bir anahtarın döndürdüğü 401, başarısız kontrol olarak kalır. Model yüklenmesi ve dış veri kaynaklarının erişilebilirliği ayrı durumlardır.
+
 Arayüz mobil/tablet/masaüstü düzenine, azaltılmış hareket tercihine ve okunabilir açık temaya sahiptir. Kamera yaşam döngüsü ve izinleri yönetilir. Gerçek ilerleme bilgisi yoksa yüzde üretilmez; kısmi/başarısız analiz temiz sayılmaz. Gerçek Android kurulumu ve kamera ayrıca denenmelidir.
