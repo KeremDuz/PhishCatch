@@ -6,9 +6,14 @@ from app.core.scan_cache import ScannerResultCache
 from app.services.ml_model_scanner import MLModelScanner
 from app.services.virustotal_scanner import VirusTotalScanner
 from app.services.url_resolver_scanner import UrlResolverScanner
-from app.services.whois_scanner import WhoisScanner
+from app.services.rdap_scanner import RdapScanner
+from app.services.local_phishing_feed import LocalPhishingFeed
 from app.services.html_scraper_scanner import HtmlScraperScanner
-from app.services.threat_intel_scanners import GoogleSafeBrowsingScanner, GoogleWebRiskScanner, UrlhausScanner
+from app.services.threat_intel_scanners import (
+    GoogleSafeBrowsingScanner,
+    GoogleWebRiskScanner,
+    UrlhausScanner,
+)
 from app.storage import TrainingStore
 
 
@@ -18,18 +23,22 @@ def get_scanning_pipeline() -> ScanningPipeline:
     Backend karar akışı:
 
     1. UrlResolver     → Gizli preprocessing; kısa link/redirect çöz, ekranda katman olarak gösterilmez.
-    2. Reputation API  → URLhaus, Google Safe Browsing, Google Web Risk, VirusTotal paralel sorgulanır.
+    2. Reputation     → Güncel yerel phishing listesi ve yapılandırılmış itibar kaynakları.
                          Bu katmanda en az bir kaynak malicious dönerse pipeline burada durur.
-    3. WhoisScanner    → Reputation malicious değilse domain/IP sinyali üretir.
+    3. RDAP            → İsteğe bağlı kayıt yaşı bağlamı; güvenli olduğuna kanıt değildir.
     4. MLModel         → URL-only lexical skor üretir.
-    5. HtmlScraper     → DOM/form/JS/render/visual analiz.
+    5. HtmlScraper     → Aynı GET üzerinde statik DOM/form/HTML modeli; eksik JS açıkça belirtilir.
     6. RiskAggregator  → Çalışan katmanların sinyalini final karara çevirir.
 
     URLHeuristicScanner bilinçli olarak pipeline dışında tutulur.
     """
     threat_intel_scanners = [
-        UrlhausScanner(auth_key=settings.urlhaus_auth_key),
+        LocalPhishingFeed(
+            settings.phishing_feed_path, settings.phishing_feed_max_age_hours
+        ),
     ]
+    if settings.urlhaus_auth_key:
+        threat_intel_scanners.append(UrlhausScanner(auth_key=settings.urlhaus_auth_key))
 
     # Google Safe Browsing — key varsa ekle (10K/gün)
     if settings.google_safe_browsing_api_key:
@@ -48,7 +57,7 @@ def get_scanning_pipeline() -> ScanningPipeline:
         threat_intel_scanners.append(VirusTotalScanner(settings=settings))
 
     scanners = [
-        WhoisScanner(),
+        RdapScanner(),
     ]
 
     # ML Model — hızlı URL lexical sinyal üretir
@@ -61,6 +70,7 @@ def get_scanning_pipeline() -> ScanningPipeline:
             browser_render_enabled=settings.html_browser_render_enabled,
             browser_timeout_ms=settings.html_browser_render_timeout_ms,
             browser_screenshot_enabled=settings.html_browser_screenshot_enabled,
+            isolated=True,
         )
     )
 
@@ -80,6 +90,7 @@ def get_scanning_pipeline() -> ScanningPipeline:
         scan_cache=scan_cache,
         skip_html_on_confident_clean=settings.html_skip_on_confident_clean,
         html_skip_max_prior_risk=settings.html_skip_max_prior_risk,
+        fetch_worker=True,
     )
 
 

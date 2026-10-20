@@ -7,7 +7,8 @@ from app.core.pipeline import ScanningPipeline
 from app.dependencies import get_scanning_pipeline
 from app.models.public_analysis import PublicAnalysisRequest, PublicAnalysisResponse
 from app.models.schemas import AnalyzeUrlResponse, StageResult, Verdict
-from app.services.url_safety import validate_public_http_url
+from app.services.url_safety import UrlSafetyResult, validate_public_http_url
+from app.services.worker_process import WorkerFailure, run_worker
 
 router = APIRouter(prefix="/api/v1/public", tags=["Public URL Analysis"])
 _PUBLIC_SCAN_SLOT = BoundedSemaphore(1)
@@ -27,7 +28,17 @@ def analyze_public_url(
 
     try:
         try:
-            safety = validate_public_http_url(payload.url)
+            safety = (
+                UrlSafetyResult(
+                    **run_worker("validate", {"url": payload.url}, timeout=8)
+                )
+                if getattr(pipeline, "fetch_worker", False)
+                else validate_public_http_url(payload.url)
+            )
+        except WorkerFailure:
+            raise HTTPException(
+                status_code=503, detail="URL validation is temporarily unavailable."
+            ) from None
         except Exception:  # noqa: BLE001 - redact diagnostics at the public boundary.
             raise HTTPException(
                 status_code=400, detail="This URL cannot be analyzed."
@@ -68,7 +79,14 @@ def _public_result(
         ):
             verdict = "malicious"
         elif (
-            status == "complete" and all_completed and analysis.final_verdict == "clean"
+            status == "complete"
+            and all_completed
+            and analysis.final_verdict == "clean"
+            and not any(
+                stage.verdict == "malicious"
+                or stage.details.get("requires_review") is True
+                for stage in completed
+            )
         ):
             verdict = "clean"
 

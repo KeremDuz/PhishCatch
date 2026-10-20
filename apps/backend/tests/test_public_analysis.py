@@ -55,6 +55,20 @@ class FakePipeline:
         return self.response.model_copy(deep=True)
 
 
+def test_validation_worker_timeout_is_unavailable_and_releases_slot(public_client, monkeypatch):
+    from app.services.worker_process import WorkerFailure
+    client, pipeline = public_client
+    pipeline.fetch_worker = True
+    def timeout(*args, **kwargs):
+        raise WorkerFailure("worker_timeout")
+    monkeypatch.setattr(public_analysis, "run_worker", timeout)
+    first = client.post(ENDPOINT, json={"url": "https://example.com/"})
+    assert first.status_code == 503 and not pipeline.calls
+    monkeypatch.setattr(public_analysis, "run_worker", lambda *a, **k: {"is_safe": True})
+    second = client.post(ENDPOINT, json={"url": "https://example.com/"})
+    assert second.status_code == 200
+
+
 @pytest.fixture
 def public_client(monkeypatch):
     pipeline = FakePipeline()

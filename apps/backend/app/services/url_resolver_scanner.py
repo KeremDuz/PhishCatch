@@ -1,109 +1,33 @@
-import requests
-from urllib.parse import urljoin
-
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
-from app.services.safe_http import public_http_request
-from app.services.url_safety import validate_public_http_url
+from app.services.page_fetch import FetchFailure, fetch_page
 
 
 class UrlResolverScanner(BaseScanner):
     def __init__(self) -> None:
         super().__init__(name="UrlResolver")
-        self.max_redirects = 5
 
     def scan(self, url: str) -> StageResult:
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/114.0.0.0 Safari/537.36"
-                )
-            }
-            current_url = url
-            redirect_chain = []
-            status_code = None
-
-            for _ in range(self.max_redirects + 1):
-                safety = validate_public_http_url(current_url)
-                if not safety.is_safe:
-                    return StageResult(
-                        scanner=self.name,
-                        verdict="unknown",
-                        risk_score=0.9,
-                        reason=f"URL fetch blocked: {safety.reason}",
-                        details={
-                            "original_url": url,
-                            "resolved_url": current_url,
-                            "safety": safety.details or {},
-                        },
-                    )
-
-                with public_http_request(
-                    "HEAD", current_url, timeout=5, headers=headers
-                ) as response:
-                    status_code = response.status_code
-                    is_redirect = response.is_redirect
-                    location = response.headers.get("Location")
-                if not is_redirect:
-                    break
-                if not location:
-                    break
-
-                next_url = urljoin(current_url, location)
-                redirect_chain.append(
-                    {
-                        "from": current_url,
-                        "to": next_url,
-                        "status_code": status_code,
-                    }
-                )
-                current_url = next_url
-            else:
-                return StageResult(
-                    scanner=self.name,
-                    verdict="unknown",
-                    risk_score=0.4,
-                    reason="Maximum redirect depth exceeded",
-                    details={
-                        "original_url": url,
-                        "resolved_url": current_url,
-                        "redirect_chain": redirect_chain,
-                    },
-                )
-
-            if current_url != url:
-                return StageResult(
-                    scanner=self.name,
-                    verdict="clean",
-                    risk_score=0.0,
-                    reason="URL redirected to a new destination",
-                    details={
-                        "original_url": url,
-                        "resolved_url": current_url,
-                        "status_code": status_code,
-                        "redirect_chain": redirect_chain,
-                    },
-                )
-
+            page = fetch_page(url)
             return StageResult(
                 scanner=self.name,
-                verdict="clean",
+                verdict="clean" if page.status_code < 400 else "unknown",
+                status="completed" if page.status_code < 400 else "failed",
                 risk_score=0.0,
-                reason="No redirects detected",
-                details={
-                    "original_url": url,
-                    "resolved_url": current_url,
-                    "status_code": status_code,
-                },
+                reason="GET target and redirect chain resolved"
+                if page.status_code < 400
+                else "Target returned an unsuccessful HTTP status",
+                details=page.metadata(),
             )
-
-        except requests.RequestException as e:
+        except FetchFailure as exc:
+            details: dict[str, object] = {"error": exc.code, "resolved_url": url}
+            if exc.safety is not None:
+                details["safety"] = exc.safety
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
-                risk_score=0.2,
-                reason="Failed to resolve URL (network error or timeout)",
-                details={"error": str(e), "resolved_url": url},
+                status="failed",
+                reason="Page could not be retrieved safely",
+                details=details,
             )

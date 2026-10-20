@@ -1,17 +1,18 @@
 import re
+import unicodedata
 from pathlib import Path
 
 import joblib
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from bs4 import BeautifulSoup, UnicodeDammit
+from urllib.parse import urlparse
 
 from app.ml.html_feature_extractor import extract_html_features_dataframe
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
 from app.services.browser_renderer import BrowserRenderResult, render_page
-from app.services.safe_http import PublicHttpResponse, public_http_request
-from app.services.url_safety import validate_public_http_url
+from app.services.page_fetch import BufferedPageResponse, fetch_page
+from app.services.html_policy import assess_dom, external_form_targets, resolve_target, site_key
 from app.services.url_heuristic_scanner import BRAND_TERMS, FREE_HOSTING_SUFFIXES, LEGITIMATE_BRAND_HOSTS
 from app.utils.url_utils import hostname_matches_allowed
 
@@ -42,8 +43,8 @@ EXPIRY_PATTERNS = [
 
 # 3. Banka bilgisi
 BANKING_PATTERNS = [
-    "iban", "account", "hesap", "routing", "sort_code", "swift",
-    "bic", "bank_account", "hesap_no",
+    "iban", "account_number", "routing", "sort_code", "swift",
+    "bic", "bank_account", "hesap_no", "hesap_numarasi",
 ]
 
 PIN_OTP_PATTERNS = [
@@ -65,8 +66,8 @@ CRYPTO_PATTERNS = [
     "secret_key", "passphrase", "seed_phrase",
 ]
 
-# 6. Autocomplete attribute'ları — tarayıcıyı kandırma girişimi
-SUSPICIOUS_AUTOCOMPLETE = [
+# Standard browser autofill hints identify field purpose, not malicious behavior.
+SENSITIVE_AUTOCOMPLETE = [
     "cc-number", "cc-exp", "cc-csc", "cc-name", "cc-type",
     "new-password", "current-password",
 ]
@@ -88,11 +89,18 @@ EXFIL_PATTERNS = [
 
 
 def _attr_matches(value: str, patterns: list[str]) -> bool:
-    """input'un name/id/placeholder/autocomplete attribute'unu kontrol et."""
+    """Match identifier tokens, including camelCase and Turkish labels."""
     if not value:
         return False
-    normalized = value.lower().replace("-", "_").replace(" ", "_")
-    return any(p in normalized for p in patterns)
+
+    def normalized(text: str) -> str:
+        text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+        text = unicodedata.normalize("NFKD", text.casefold().replace("ı", "i"))
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        return " ".join(re.findall(r"[a-z0-9]+", text))
+
+    tokens = f" {normalized(value)} "
+    return any(f" {normalized(pattern)} " in tokens for pattern in patterns)
 
 
 def _scan_inputs(soup: BeautifulSoup) -> dict:
@@ -119,7 +127,8 @@ def _scan_inputs(soup: BeautifulSoup) -> dict:
         "crypto": [],
         "file_upload": [],
         "hidden_exfil": [],
-        "suspicious_autocomplete": [],
+        "sensitive_autocomplete": [],
+        "hidden_fields": [],
     }
 
     # ── 1. Label → input eşleştirme haritası ──
@@ -143,7 +152,6 @@ def _scan_inputs(soup: BeautifulSoup) -> dict:
         placeholder = element.get("placeholder", "") or ""
         autocomplete = element.get("autocomplete", "") or ""
         aria_label = element.get("aria-label", "") or ""
-        inputmode = element.get("inputmode", "") or ""
         class_attr = " ".join(element.get("class", []))
         title_attr = element.get("title", "") or ""
 
@@ -173,17 +181,8 @@ def _scan_inputs(soup: BeautifulSoup) -> dict:
         # ── type="hidden" → sessiz veri sızdırma ──
         # Hacker bazen kullanıcı bilgisini hidden input'a koyar
         if input_type == "hidden":
-            value = element.get("value", "") or ""
-            # Eğer name veya value'da hassas kelimeler varsa
-            hidden_check = f"{name} {id_attr} {value}"
-            suspicious_hidden_words = [
-                "token", "session", "csrf", "user_id", "email",
-                "device", "fingerprint", "browser",
-            ]
-            if any(w in hidden_check.lower() for w in suspicious_hidden_words):
-                findings["hidden_exfil"].append({
-                    "tag": tag_name, "name": name, "value_preview": value[:50],
-                })
+            # Do not retain hidden values (CSRF/session tokens) in scan metadata.
+            findings["hidden_fields"].append({"tag": tag_name, "name": name})
             continue
 
         # ── type="file" → kimlik belgesi yükleme ──
@@ -196,25 +195,11 @@ def _scan_inputs(soup: BeautifulSoup) -> dict:
             continue
 
         # ── Autocomplete abuse ──
-        if autocomplete and autocomplete.lower() in SUSPICIOUS_AUTOCOMPLETE:
-            findings["suspicious_autocomplete"].append({
+        if autocomplete and autocomplete.lower() in SENSITIVE_AUTOCOMPLETE:
+            findings["sensitive_autocomplete"].append({
                 "tag": tag_name, "autocomplete": autocomplete,
                 "name": name, "id": id_attr,
             })
-
-        # ── inputmode="numeric" + kısa maxlength → PIN/OTP ipucu ──
-        if inputmode == "numeric":
-            maxlength = element.get("maxlength", "")
-            try:
-                ml = int(maxlength)
-            except (ValueError, TypeError):
-                ml = 999
-            if ml <= 8:  # PIN: 4-6, OTP: 6, CVV: 3
-                findings["pin_otp"].append({
-                    "tag": tag_name, "type": input_type, "name": name,
-                    "inputmode": inputmode, "maxlength": maxlength,
-                    "hint": "numeric inputmode with short maxlength",
-                })
 
         # ── Credential kalıpları ──
         if _attr_matches(all_attrs, CREDENTIAL_PATTERNS):
@@ -256,7 +241,7 @@ def _scan_inputs(soup: BeautifulSoup) -> dict:
             })
 
         # ── PIN / OTP (attribute bazlı) ──
-        if _attr_matches(all_attrs, PIN_OTP_PATTERNS):
+        if _attr_matches(all_attrs, PIN_OTP_PATTERNS) or autocomplete.lower() == "one-time-code":
             findings["pin_otp"].append({
                 "tag": tag_name, "type": input_type, "name": name,
             })
@@ -344,16 +329,16 @@ def _scan_js_threats(soup: BeautifulSoup, raw_html: str) -> dict:
     return threats
 
 
-def _scan_iframes(soup: BeautifulSoup, base_domain: str) -> list:
+def _scan_iframes(soup: BeautifulSoup, page_url: str) -> list:
     """Dış kaynaklı iframe'leri bul — form gizleme, overlay saldırısı."""
     suspicious = []
     for iframe in soup.find_all("iframe"):
         src = iframe.get("src", "") or ""
-        if src.startswith("http"):
-            iframe_domain = urlparse(src).netloc
-            if iframe_domain and iframe_domain != base_domain:
+        resolved = resolve_target(soup, page_url, src)
+        if resolved:
+            iframe_domain = urlparse(resolved).hostname
+            if iframe_domain and site_key(resolved) != site_key(page_url):
                 suspicious.append({
-                    "src": src[:200],
                     "domain": iframe_domain,
                     "hidden": iframe.get("style", "").find("display:none") >= 0
                               or iframe.get("width") == "0"
@@ -369,6 +354,7 @@ class HtmlScraperScanner(BaseScanner):
         browser_render_enabled: bool = False,
         browser_timeout_ms: int = 7000,
         browser_screenshot_enabled: bool = False,
+        isolated: bool = False,
     ) -> None:
         super().__init__(name="HtmlScraper")
         self.max_redirects = 5
@@ -377,9 +363,17 @@ class HtmlScraperScanner(BaseScanner):
         self.browser_render_enabled = browser_render_enabled
         self.browser_timeout_ms = browser_timeout_ms
         self.browser_screenshot_enabled = browser_screenshot_enabled
+        self.isolated = isolated
 
     def scan(self, url: str) -> StageResult:
         try:
+            if self.isolated:
+                from app.services.worker_process import run_worker
+                page = fetch_page(url)
+                result = run_worker("html", {"page": page.to_wire(), "model_path": self.model_path}, timeout=20)
+                if "error" in result:
+                    raise ValueError("Isolated HTML analysis failed")
+                return StageResult.model_validate({**result["stage"], "training_features": result["training_features"]})
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
@@ -390,10 +384,9 @@ class HtmlScraperScanner(BaseScanner):
                 response.close()
                 raise
             parsed_url = urlparse(final_url)
-            base_domain = parsed_url.netloc
 
             content_type = response.headers.get("Content-Type", "")
-            if "text/html" not in content_type:
+            if content_type.split(";", 1)[0].strip().lower() not in {"text/html", "application/xhtml+xml"}:
                 response.close()
                 return StageResult(
                     scanner=self.name,
@@ -417,168 +410,36 @@ class HtmlScraperScanner(BaseScanner):
             finally:
                 response.close()
 
-            raw_html = html_bytes.decode("utf-8", errors="ignore")
+            decoded = UnicodeDammit(html_bytes, is_html=True)
+            raw_html = decoded.unicode_markup
+            if raw_html is None:
+                raise ValueError("HTML encoding could not be decoded")
             soup = BeautifulSoup(raw_html, "lxml")
             browser_render = self._maybe_render_html(final_url, raw_html, soup)
-            if self._should_try_browser_render(raw_html, soup) and not browser_render.available:
-                return StageResult(
-                    scanner=self.name, verdict="unknown", status="unavailable",
-                    reason="Dynamic HTML content could not be verified",
-                    details={"browser_render": browser_render.as_dict(), "final_url": final_url},
-                )
+            needs_dynamic_analysis = self._should_try_browser_render(raw_html, soup) and not browser_render.available
             if browser_render.available and browser_render.html:
                 raw_html = browser_render.html
                 final_url = browser_render.final_url or final_url
                 parsed_url = urlparse(final_url)
-                base_domain = parsed_url.netloc
                 soup = BeautifulSoup(raw_html, "lxml")
 
             # ── Analiz ──
             input_findings = _scan_inputs(soup)
             js_threats = _scan_js_threats(soup, raw_html)
-            external_iframes = _scan_iframes(soup, base_domain)
+            external_iframes = _scan_iframes(soup, final_url)
             html_model_result = self._predict_html_model(final_url, raw_html)
             html_training_features = html_model_result.pop("features", None)
 
-            # Form action analizi
             forms = soup.find_all("form")
-            external_actions = 0
-            abnormal_actions = 0
-            for form in forms:
-                action = (form.get("action") or "").strip()
-                if not action or action.startswith("#") or action.startswith("javascript:"):
-                    abnormal_actions += 1
-                elif action.startswith("http"):
-                    action_domain = urlparse(action).netloc
-                    if action_domain and action_domain != base_domain:
-                        external_actions += 1
+            external_actions, abnormal_actions = external_form_targets(soup, final_url)
 
-            title = soup.title.string.strip() if soup.title and soup.title.string else None
+            title = soup.title.string.strip()[:256] if soup.title and soup.title.string else None
             visual_brand_signals = self._scan_visual_brand_signals(soup, final_url, input_findings)
 
-            # ── Tehdit puanı hesapla ──
-            threat_score = 0.0
-            reasons = []
-
-            # Credential theft — tek başına düşük puan (her login sayfasında var)
-            # Diğer sinyallerle birleşince tehlikeli olur
-            cred_count = len(input_findings["credentials"])
-            if cred_count > 0:
-                threat_score += 0.15
-                reasons.append(f"{cred_count} credential input(s) found")
-
-            # Kredi kartı bilgisi toplama
-            cc_count = len(input_findings["credit_card"])
-            cvv_count = len(input_findings["cvv"])
-            if cc_count > 0:
-                threat_score += 0.35
-                reasons.append(f"Credit card input detected ({cc_count} field(s))")
-            if cvv_count > 0:
-                threat_score += 0.15
-                reasons.append(f"CVV/security code field detected")
-
-            # Banka bilgisi
-            bank_count = len(input_findings["banking"])
-            if bank_count > 0:
-                threat_score += 0.3
-                reasons.append(f"Banking/IBAN input detected ({bank_count} field(s))")
-
-            # PIN / OTP
-            pin_count = len(input_findings["pin_otp"])
-            if pin_count > 0:
-                threat_score += 0.25
-                reasons.append(f"PIN/OTP verification input detected")
-
-            # Kimlik bilgisi
-            id_count = len(input_findings["identity"])
-            if id_count > 0:
-                threat_score += 0.25
-                reasons.append(f"Identity/SSN input detected ({id_count} field(s))")
-
-            # Crypto seed
-            crypto_count = len(input_findings["crypto"])
-            if crypto_count > 0:
-                threat_score += 0.4
-                reasons.append(f"Crypto wallet/seed phrase input detected")
-
-            # Dosya yükleme — kimlik belgesi
-            file_count = len(input_findings["file_upload"])
-            if file_count > 0 and cred_count > 0:
-                threat_score += 0.2
-                reasons.append(f"File upload with credential fields (ID theft risk)")
-
-            # Autocomplete kötüye kullanım
-            ac_count = len(input_findings["suspicious_autocomplete"])
-            if ac_count > 0:
-                threat_score += 0.15
-                reasons.append(f"Suspicious autocomplete attributes (browser autofill abuse)")
-
-            # Form action dışarı gidiyor
-            if external_actions > 0 and (cred_count > 0 or cc_count > 0):
-                threat_score += 0.25
-                reasons.append(f"Form submits sensitive data to external domain")
-
-            # Abnormal form action
-            if abnormal_actions > 0 and (cred_count > 0 or cc_count > 0):
-                threat_score += 0.1
-                reasons.append(f"Form has empty/javascript action (data exfil via JS)")
-
-            # JS keylogger
-            if js_threats["keyloggers"]:
-                threat_score += 0.3
-                reasons.append(f"JavaScript keylogger detected")
-
-            # JS exfiltration
-            if js_threats["exfiltration"]:
-                threat_score += 0.2
-                reasons.append(f"JavaScript data exfiltration pattern found")
-
-            # Right-click disabled — many legit sites also do this
-            if js_threats["right_click_disabled"]:
-                threat_score += 0.05
-                reasons.append(f"Right-click disabled (anti-inspection)")
-
-            # Clipboard hijack
-            if js_threats["clipboard_hijack"]:
-                threat_score += 0.15
-                reasons.append(f"Clipboard manipulation detected")
-
-            # External iframe
-            if external_iframes:
-                threat_score += 0.2
-                reasons.append(f"{len(external_iframes)} external iframe(s) found (overlay/clickjacking risk)")
-
-            # HTTP + sensitive input
-            if parsed_url.scheme != "https" and (cred_count > 0 or cc_count > 0 or bank_count > 0):
-                threat_score += 0.2
-                reasons.append(f"Sensitive data collected over insecure HTTP")
-
-            # Title yok ama input var
-            if not title and (cred_count > 0 or cc_count > 0):
-                threat_score += 0.1
-                reasons.append(f"Missing page title (cheap phishing clone)")
-
-            # Hidden input ile veri sızdırma
-            hidden_count = len(input_findings.get("hidden_exfil", []))
-            if hidden_count > 0 and (cred_count > 0 or cc_count > 0):
-                threat_score += 0.1
-                reasons.append(f"Hidden inputs collecting session/device data ({hidden_count})")
-
-            # formaction override — form action'ı button ile değiştirme
-            formaction_count = len(input_findings.get("formaction_override", []))
-            if formaction_count > 0:
-                threat_score += 0.2
-                reasons.append(f"Button formaction override detected (bypasses form action)")
-
-            # contenteditable — modern JS input
-            ce_count = len(input_findings.get("contenteditable", []))
-            if ce_count > 0 and (cred_count > 0 or cc_count > 0):
-                threat_score += 0.1
-                reasons.append(f"contenteditable elements with sensitive inputs")
-
-            for signal in visual_brand_signals:
-                threat_score += float(signal["score"])
-                reasons.append(str(signal["reason"]))
+            # Normal form controls are observations. Risk needs contextual evidence.
+            assessment = assess_dom(soup, final_url, input_findings, js_threats, visual_brand_signals)
+            threat_score = assessment.score
+            reasons = list(assessment.reasons)
 
             # ── Karar ──
             rule_threat_score = min(threat_score, 1.0)
@@ -595,6 +456,9 @@ class HtmlScraperScanner(BaseScanner):
             )
 
             details = {
+                "requires_review": assessment.requires_review or needs_dynamic_analysis,
+                "rule_context": assessment.context,
+                "dynamic_analysis": {"required": needs_dynamic_analysis, "available": browser_render.available},
                 "title": title,
                 "total_forms": len(forms),
                 "external_form_actions": external_actions,
@@ -624,7 +488,6 @@ class HtmlScraperScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="malicious",
-                    confidence=round(threat_score, 4),
                     risk_score=round(threat_score, 4),
                     malicious_probability=html_model_result.get("malicious_probability"),
                     clean_probability=html_model_result.get("clean_probability"),
@@ -632,11 +495,10 @@ class HtmlScraperScanner(BaseScanner):
                     details=details,
                     training_features={"html_features": html_training_features} if html_training_features else {},
                 )
-            elif threat_score >= 0.3:
+            elif threat_score >= 0.3 or assessment.requires_review or needs_dynamic_analysis:
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
-                    confidence=round(threat_score, 4),
                     risk_score=round(threat_score, 4),
                     malicious_probability=html_model_result.get("malicious_probability"),
                     clean_probability=html_model_result.get("clean_probability"),
@@ -696,9 +558,14 @@ class HtmlScraperScanner(BaseScanner):
         html_lower = raw_html.lower()
         has_app_shell = bool(soup.select("#root, #app, app-root, main-app, [data-reactroot]"))
         asks_for_javascript = "enable javascript" in html_lower or "requires javascript" in html_lower
-        sparse_shell = len(raw_html) < 3500 and len(text) < 500 and (scripts or has_app_shell)
+        empty_app_shell = has_app_shell and any(
+            not node.get_text(" ", strip=True) and not node.find(["form", "input", "article", "p"])
+            for node in soup.select("#root, #app, app-root, main-app, [data-reactroot]")
+        )
+        # Raw byte length is not evidence that external scripts have been analyzed.
+        sparse_shell = bool(scripts) and not inputs and not forms and len(text) < 200
         script_heavy_without_forms = len(scripts) >= 5 and not inputs and not forms and len(text) < 1200
-        return asks_for_javascript or sparse_shell or script_heavy_without_forms
+        return asks_for_javascript or (empty_app_shell and bool(scripts)) or sparse_shell or script_heavy_without_forms
 
     def _scan_visual_brand_signals(
         self,
@@ -708,7 +575,9 @@ class HtmlScraperScanner(BaseScanner):
     ) -> list[dict[str, object]]:
         parsed = urlparse(final_url)
         hostname = (parsed.hostname or "").lower().strip(".")
-        visual_text = self._extract_visual_text(soup)
+        # Brand references in articles, social-login buttons and footer links are
+        # not an identity claim. Prefer the page title and primary heading.
+        visual_text = " ".join(tag.get_text(" ", strip=True) for tag in soup.find_all(["title", "h1"], limit=5))
         visual_haystack = visual_text.lower()
         brand_hits = sorted(brand for brand in BRAND_TERMS if brand in visual_haystack)
         logo_hits = self._brand_asset_hits(soup)
@@ -745,7 +614,7 @@ class HtmlScraperScanner(BaseScanner):
         suspicious_logo_hits = [
             brand for brand in logo_hits if not self._is_legitimate_brand_host(hostname, brand)
         ]
-        if suspicious_logo_hits:
+        if suspicious_logo_hits and not signals and (credential_count or sensitive_count):
             signals.append(
                 {
                     "rule": "brand_logo_asset_mismatch",
@@ -799,39 +668,9 @@ class HtmlScraperScanner(BaseScanner):
     def _endswith_any(hostname: str, suffixes: tuple[str, ...]) -> bool:
         return any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes)
 
-    def _safe_get(self, url: str, headers: dict[str, str]) -> tuple[PublicHttpResponse, str, list[dict]]:
-        current_url = url
-        redirect_chain = []
-
-        for _ in range(self.max_redirects + 1):
-            safety = validate_public_http_url(current_url)
-            if not safety.is_safe:
-                raise ValueError(f"URL fetch blocked: {safety.reason}")
-
-            response = public_http_request(
-                "GET", current_url,
-                headers=headers,
-                timeout=5,
-            )
-
-            if not response.is_redirect:
-                return response, current_url, redirect_chain
-
-            location = response.headers.get("Location")
-            if not location:
-                return response, current_url, redirect_chain
-            response.close()
-            next_url = urljoin(current_url, location)
-            redirect_chain.append(
-                {
-                    "from": current_url,
-                    "to": next_url,
-                    "status_code": response.status_code,
-                }
-            )
-            current_url = next_url
-
-        raise ValueError("Maximum redirect depth exceeded")
+    def _safe_get(self, url: str, headers: dict[str, str]):
+        page = fetch_page(url, headers=headers)
+        return BufferedPageResponse(page), page.final_url, list(page.redirect_chain)
 
     @staticmethod
     def _load_model(model_path: str | None):
@@ -902,7 +741,7 @@ class HtmlScraperScanner(BaseScanner):
             return 0.0
         if probability >= 0.8:
             return min(0.88, 0.75 + ((probability - 0.8) * 0.5))
-        return min(0.88, 0.25 + ((probability - 0.5) * 1.26))
+        return 0.25 + ((probability - 0.5) * (0.5 / 0.3))
 
     @staticmethod
     def _combine_rule_and_model_scores(rule_score: float, html_model_result: dict[str, object]) -> float:

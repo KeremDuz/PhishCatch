@@ -26,6 +26,7 @@ apps/backend/Arttırımlı_*_ML.pkl
 apps/backend/Arttırımlı_*_ML.metadata.json
 apps/backend/Arttırımlı_*_training_features.csv
 apps/backend/data/*.csv
+apps/backend/data/phishing-feed.json
 
 # Generated benchmark / feed outputs
 apps/backend/feed*_results.json

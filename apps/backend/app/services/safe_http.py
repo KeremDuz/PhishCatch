@@ -12,6 +12,7 @@ from time import monotonic
 from urllib.parse import urlsplit
 
 import requests
+import zlib
 from requests.adapters import HTTPAdapter
 from requests.models import PreparedRequest
 from urllib3 import HTTPConnectionPool, HTTPSConnectionPool
@@ -20,6 +21,7 @@ from app.services.url_safety import validate_public_http_url
 
 BODY_BUDGET_SECONDS = 15.0
 MAX_SOCKET_TIMEOUT_SECONDS = 5.0
+MAX_DECODED_BYTES = 1024 * 1024
 
 
 class UnsafeUrlError(requests.RequestException):
@@ -92,6 +94,9 @@ class PublicHttpResponse:
     def iter_content(self, chunk_size: int) -> Iterator[bytes]:
         if chunk_size <= 0:
             raise ValueError("Chunk size must be positive")
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if self.headers.get("Content-Encoding", "").lower().strip() == "gzip" else None
+        decoded_size = 0
+        encoded_size = 0
         try:
             while True:
                 remaining = self._body_deadline - monotonic()
@@ -110,7 +115,21 @@ class PublicHttpResponse:
                     raise requests.ReadTimeout("HTTP body exceeded the analysis time budget")
                 if not chunk:
                     break
+                encoded_size += len(chunk)
+                if encoded_size > MAX_DECODED_BYTES:
+                    raise requests.RequestException("HTTP encoded body exceeds size limit")
+                if decoder is not None:
+                    chunk = decoder.decompress(chunk, MAX_DECODED_BYTES - decoded_size + 1)
+                    if decoder.unconsumed_tail or decoder.unused_data:
+                        raise requests.RequestException("HTTP gzip exceeds size limit or has trailing data")
+                decoded_size += len(chunk)
+                if decoded_size > MAX_DECODED_BYTES:
+                    raise requests.RequestException("HTTP decoded body exceeds size limit")
                 yield chunk
+            if decoder is not None and not decoder.eof:
+                raise requests.RequestException("Truncated HTTP gzip body")
+        except zlib.error:
+            raise requests.RequestException("Invalid HTTP gzip body") from None
         finally:
             self.close()
 
@@ -133,6 +152,7 @@ def public_http_request(
     *,
     headers: Mapping[str, str] | None = None,
     timeout: float = 5,
+    allow_gzip: bool = False,
 ) -> PublicHttpResponse:
     if method not in {"HEAD", "GET"}:
         raise UnsafeUrlError("Only read-only HTTP requests are allowed")
@@ -164,7 +184,8 @@ def public_http_request(
             verify=True,
             proxies={},
         )
-        if response.headers.get("Content-Encoding", "identity").strip().lower() not in {"", "identity"}:
+        allowed_encodings = {"", "identity", "gzip"} if allow_gzip else {"", "identity"}
+        if response.headers.get("Content-Encoding", "identity").strip().lower() not in allowed_encodings:
             response.close()
             raise requests.RequestException("Encoded HTTP bodies cannot be analysed within the bounded reader")
     except BaseException:

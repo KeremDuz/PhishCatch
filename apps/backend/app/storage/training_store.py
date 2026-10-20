@@ -272,14 +272,15 @@ class TrainingStore:
         return [self._observation_from_row(row) for row in rows], total
 
     def training_samples(self, *, approved_only: bool = True) -> list[dict[str, Any]]:
-        where_clause = "WHERE approved_for_training = 1" if approved_only else ""
+        where_clause = "WHERE t.approved_for_training = 1" if approved_only else ""
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT *
-                FROM training_samples
+                SELECT t.*, o.scanned_at AS observed_at
+                FROM training_samples t
+                LEFT JOIN url_observations o ON o.id = t.observation_id
                 {where_clause}
-                ORDER BY created_at ASC, id ASC
+                ORDER BY t.created_at ASC, t.id ASC
                 """
             ).fetchall()
 

@@ -6,6 +6,7 @@ from app.core.risk_aggregator import RiskAggregator
 from app.core.scan_cache import ScannerResultCache
 from app.models.schemas import AnalyzeUrlResponse, StageResult
 from app.services.base_scanner import BaseScanner
+from app.services.page_fetch import page_fetch_session
 
 EXTERNAL_REPUTATION_SCANNERS = {
     "URLhausScanner",
@@ -25,6 +26,7 @@ class ScanningPipeline:
         scan_cache: ScannerResultCache | None = None,
         skip_html_on_confident_clean: bool = False,
         html_skip_max_prior_risk: float = 0.08,
+        fetch_worker: bool = False,
     ) -> None:
         if not scanners:
             raise ValueError("ScanningPipeline requires at least one scanner")
@@ -35,12 +37,31 @@ class ScanningPipeline:
         self.scan_cache = scan_cache
         self.skip_html_on_confident_clean = skip_html_on_confident_clean
         self.html_skip_max_prior_risk = html_skip_max_prior_risk
+        self.fetch_worker = fetch_worker
 
     def run(self, url: str, original_input: str | None = None) -> AnalyzeUrlResponse:
+        with page_fetch_session(use_worker=self.fetch_worker):
+            return self._run(url, original_input)
+
+    def _run(self, url: str, original_input: str | None) -> AnalyzeUrlResponse:
         stages: list[StageResult] = []
         current_url = url
         external_reputation_blocked = False
         preprocessing_details: dict[str, object] = {}
+        targets = [url]
+
+        # A verified local match needs no request to the potentially hostile site.
+        for scanner in self.threat_intel_scanners:
+            if scanner.name == "LocalPhishingFeed":
+                local = self._scan_with_cache(scanner, url)
+                if local.status == "completed" and local.verdict == "malicious":
+                    return self._build_response(
+                        url,
+                        original_input,
+                        [local],
+                        {},
+                        decided_by="ThreatIntelShortCircuit",
+                    )
 
         if self.redirect_resolver is not None:
             resolver_result = self._scan_with_cache(self.redirect_resolver, current_url)
@@ -62,9 +83,20 @@ class ScanningPipeline:
             resolved_url = resolver_result.details.get("resolved_url")
             if resolved_url and resolved_url != current_url:
                 current_url = resolved_url
+            for hop in resolver_result.details.get("redirect_chain", []):
+                for key in ("from", "to"):
+                    candidate = hop.get(key)
+                    if (
+                        isinstance(candidate, str)
+                        and candidate not in targets
+                        and len(targets) < 8
+                    ):
+                        targets.append(candidate)
+            if current_url not in targets:
+                targets.append(current_url)
 
-        threat_intel_stages = self._scan_threat_intelligence(
-            current_url, external_reputation_blocked
+        threat_intel_stages = self._scan_threat_intelligence_targets(
+            targets, external_reputation_blocked
         )
         stages.extend(threat_intel_stages)
         malicious_reputation_stages = [
@@ -126,6 +158,72 @@ class ScanningPipeline:
 
             stage_result = self._scan_with_cache(scanner, current_url)
             stages.append(stage_result)
+            if scanner.name == "MLModelScanner" and len(targets) > 1:
+                redirect_results = [
+                    self._scan_with_cache(scanner, target)
+                    for target in targets
+                    if target != current_url
+                ]
+                selected = max(
+                    redirect_results, key=lambda item: item.malicious_probability or 0
+                )
+                stages.append(
+                    selected.model_copy(
+                        deep=True,
+                        update={
+                            "scanner": "RedirectUrlModel",
+                            "training_features": {},
+                            "details": {
+                                "checked_targets": [
+                                    target
+                                    for target in targets
+                                    if target != current_url
+                                ],
+                                "component_of": "redirect_chain",
+                            },
+                        },
+                    )
+                )
+                if (
+                    any(item.status != "completed" for item in redirect_results)
+                    and selected.status == "completed"
+                ):
+                    stages.append(
+                        StageResult(
+                            scanner="RedirectModelCoverage",
+                            verdict="unknown",
+                            status="unavailable",
+                            reason="Some redirect URL features could not be assessed",
+                        )
+                    )
+            if (
+                scanner.name == "HtmlScraper"
+                and stage_result.details.get("final_url", current_url) != current_url
+            ):
+                stages.append(
+                    StageResult(
+                        scanner="TargetConsistency",
+                        verdict="unknown",
+                        status="failed",
+                        reason="Content and URL evidence refer to different destinations",
+                    )
+                )
+            dynamic = stage_result.details.get("dynamic_analysis")
+            if (
+                stage_result.scanner == "HtmlScraper"
+                and isinstance(dynamic, dict)
+                and dynamic.get("required") is True
+                and dynamic.get("available") is not True
+            ):
+                stages.append(
+                    StageResult(
+                        scanner="BrowserRenderer",
+                        verdict="unknown",
+                        status="unavailable",
+                        reason="Dynamic content requires an isolated browser worker",
+                        details={"component_of": "HtmlScraper"},
+                    )
+                )
             html_model = stage_result.details.get("html_model")
             if (
                 stage_result.scanner == "HtmlScraper"
@@ -155,6 +253,37 @@ class ScanningPipeline:
         return self._build_response(
             current_url, original_input, stages, preprocessing_details
         )
+
+    def _scan_threat_intelligence_targets(
+        self, targets: list[str], blocked: bool
+    ) -> list[StageResult]:
+        if len(targets) == 1 or blocked:
+            return self._scan_threat_intelligence(targets[-1], blocked)
+        by_provider: dict[str, list[StageResult]] = {}
+        for target in targets:
+            for stage in self._scan_threat_intelligence(target, False):
+                by_provider.setdefault(stage.scanner, []).append(stage)
+        combined: list[StageResult] = []
+        for name, results in by_provider.items():
+            hits = [
+                stage
+                for stage in results
+                if stage.status == "completed" and stage.verdict == "malicious"
+            ]
+            missing = [stage for stage in results if stage.status != "completed"]
+            selected = (hits or missing or results)[0].model_copy(deep=True)
+            selected.details["checked_targets"] = list(targets)
+            combined.append(selected)
+            if hits and missing:
+                combined.append(
+                    StageResult(
+                        scanner=f"{name}Coverage",
+                        verdict="unknown",
+                        status="unavailable",
+                        reason="Some redirect reputation checks were incomplete",
+                    )
+                )
+        return combined
 
     @staticmethod
     def _should_skip_external_reputation(resolver_result: StageResult) -> bool:
@@ -267,7 +396,12 @@ class ScanningPipeline:
         ]
 
     def _scan_with_cache(self, scanner: BaseScanner, url: str) -> StageResult:
-        if self.scan_cache is not None:
+        cacheable = scanner.name not in {
+            "UrlResolver",
+            "HtmlScraper",
+            "LocalPhishingFeed",
+        }
+        if self.scan_cache is not None and cacheable:
             cached = self.scan_cache.get(scanner.name, url)
             if cached is not None:
                 return cached
@@ -312,7 +446,7 @@ class ScanningPipeline:
                 result.status = "unavailable"
             elif "timed out" in reason or "unexpected response" in reason:
                 result.status = "failed"
-        if self.scan_cache is not None:
+        if self.scan_cache is not None and cacheable:
             self.scan_cache.set(scanner.name, url, result)
         return result
 
@@ -423,7 +557,11 @@ class ScanningPipeline:
             "implementation": type(scanner).__name__,
         }
 
-        if scanner.name == "WhoisScanner":
+        if scanner.name == "LocalPhishingFeed":
+            details.update(scanner.health())
+            status = "ok" if details.get("available") else "degraded"
+
+        elif scanner.name == "WhoisScanner":
             whois_available = shutil.which("whois") is not None
             details["whois_command_available"] = whois_available
             status = "ok" if whois_available else "degraded"

@@ -39,7 +39,9 @@ class RiskAggregator:
     MALICIOUS_THRESHOLD = 0.6
     UNKNOWN_THRESHOLD = 0.35
     HTML_SIGNAL_THRESHOLD = 0.3
+    POLICY_VERSION = "phishcatch-risk-v2"
     THREAT_INTEL_SCANNERS = {
+        "LocalPhishingFeed",
         "URLhausScanner",
         "GoogleSafeBrowsing",
         "GoogleWebRisk",
@@ -61,11 +63,21 @@ class RiskAggregator:
         negative_offset = self._negative_offset(positive, negative)
         risk_score = self._clamp(positive_risk - negative_offset)
 
+        unresolved_alerts = [
+            stage.scanner
+            for stage in stages
+            if stage.status == "completed"
+            and (
+                stage.verdict == "malicious"
+                or stage.details.get("requires_review") is True
+            )
+        ]
         if risk_score >= self.MALICIOUS_THRESHOLD:
             final_verdict: FinalVerdict = "malicious"
         elif (
             positive
             and risk_score >= self.UNKNOWN_THRESHOLD
+            or unresolved_alerts
             or not stages
             or any(stage.status != "completed" for stage in stages)
             or all(
@@ -108,6 +120,8 @@ class RiskAggregator:
             else None,
             summary=summary,
             signals={
+                "policy_version": self.POLICY_VERSION,
+                "unresolved_local_alerts": unresolved_alerts,
                 "malicious_threshold": self.MALICIOUS_THRESHOLD,
                 "unknown_threshold": self.UNKNOWN_THRESHOLD,
                 "probability_source": probability_stage.scanner
@@ -147,7 +161,7 @@ class RiskAggregator:
         if stage.scanner == "WhoisScanner":
             return self._score_whois(stage, reason)
 
-        if stage.scanner == "MLModelScanner":
+        if stage.scanner in {"MLModelScanner", "RedirectUrlModel"}:
             return self._score_ml(stage, reason)
 
         if stage.scanner == "HtmlScraper":
@@ -198,8 +212,7 @@ class RiskAggregator:
             return RiskEvidence(
                 stage.scanner, self._clamp(stage.risk_score or 0.45), reason
             ), None
-        if signal == "established_domain" or stage.verdict == "clean":
-            return None, RiskEvidence(stage.scanner, 0.05, reason)
+        # Registration age is context, not evidence that current content is safe.
         return None, None
 
     def _score_ml(
@@ -237,6 +250,13 @@ class RiskAggregator:
             return None, None
 
         threat_score = float(threat_score)
+        context = stage.details.get("rule_context") or {}
+        if context.get("strong_signal") is True and threat_score >= 0.8:
+            return RiskEvidence(
+                stage.scanner,
+                max(0.75, self._html_evidence_score(threat_score)),
+                reason,
+            ), None
         if threat_score >= self.HTML_SIGNAL_THRESHOLD:
             return RiskEvidence(
                 stage.scanner, self._html_evidence_score(threat_score), reason

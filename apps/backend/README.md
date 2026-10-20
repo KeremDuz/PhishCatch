@@ -43,3 +43,7 @@ python scripts/smoke_test_fastapi.py
 ```
 
 Davranış testleri gerçek internet veya model dosyası gerektirmez. Gerçek model kabulü, mobil kamera ve bağlı cihaz testi ayrı olarak yapılır.
+
+## Tespit mekanizması
+
+Güncel karar profili, liste güncellemesi, model değerlendirme koşulları ve bilinen sınırlar: [DETECTION.md](DETECTION.md).

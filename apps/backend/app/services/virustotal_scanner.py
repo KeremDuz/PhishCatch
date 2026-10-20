@@ -95,13 +95,11 @@ class VirusTotalScanner(BaseScanner):
             malicious_hits = int(stats.get("malicious", 0))
             suspicious_hits = int(stats.get("suspicious", 0))
 
-            if malicious_hits > 0 or suspicious_hits > 0:
-                confidence = min(1.0, (malicious_hits + suspicious_hits) / 10)
+            if malicious_hits >= 2:
                 risk_score = min(0.95, max(0.65, ((malicious_hits * 2) + suspicious_hits) / 8))
                 return StageResult(
                     scanner=self.name,
                     verdict="malicious",
-                    confidence=round(confidence, 4),
                     risk_score=round(risk_score, 4),
                     reason="VirusTotal flagged URL",
                     details={**request_details, "analysis_stats": stats},
@@ -110,9 +108,9 @@ class VirusTotalScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
-                risk_score=0.0,
-                reason="VirusTotal clean/unrated result, fallback to ML",
-                details={**request_details, "analysis_stats": stats},
+                risk_score=0.2 if malicious_hits or suspicious_hits else 0.0,
+                reason="Isolated VirusTotal alert requires corroboration" if malicious_hits or suspicious_hits else "VirusTotal clean/unrated result, fallback to ML",
+                details={**request_details, "analysis_stats": stats, "requires_review": bool(malicious_hits or suspicious_hits)},
             )
         except requests.RequestException as exc:
             return StageResult(
