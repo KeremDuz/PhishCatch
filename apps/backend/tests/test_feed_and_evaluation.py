@@ -6,6 +6,7 @@ import io
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from urllib.request import Request
 
 import joblib
 import pandas as pd
@@ -17,6 +18,7 @@ from app.core.risk_aggregator import RiskAggregator
 from app.ml.evaluation import grouped_temporal_indices, wilson_upper
 from app.models.schemas import StageResult
 from app.services import rdap_scanner, safe_http
+from app.services.feed_update import CDN_SOURCE, FeedRedirectHandler
 from app.services.local_phishing_feed import LocalPhishingFeed, url_digest
 from app.services.page_fetch import PageArtifact
 from app.services.virustotal_scanner import VirusTotalScanner
@@ -106,6 +108,22 @@ def test_import_only_verified_online_rows_and_keep_query_semantics():
 def test_invalid_feed_cannot_be_imported(raw):
     with pytest.raises((ValueError, OSError, EOFError)):
         decode_feed(raw)
+
+
+def test_official_feed_cdn_redirect_is_allowed_but_downgrades_and_other_hosts_are_not():
+    handler = FeedRedirectHandler()
+    request = Request("https://data.phishtank.com/data/online-valid.json.bz2")
+    assert (
+        handler.redirect_request(request, None, 302, "", {}, CDN_SOURCE).full_url
+        == CDN_SOURCE
+    )
+    for url in (
+        "http://cdn.phishtank.com/datadumps/verified_online.json.bz2",
+        "https://other.example/feed",
+        "http://127.0.0.1/",
+    ):
+        with pytest.raises(ValueError):
+            handler.redirect_request(request, None, 302, "", {}, url)
 
 
 def cohort():

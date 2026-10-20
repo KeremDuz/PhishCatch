@@ -13,7 +13,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,6 +23,16 @@ from app.services.local_phishing_feed import MAX_FEED_ENTRIES, url_digest
 
 MAX_COMPRESSED = 16 * 1024**2
 MAX_DECODED = 64 * 1024**2
+CDN_SOURCE = "https://cdn.phishtank.com/datadumps/verified_online.json.bz2"
+
+
+class FeedRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # The official data endpoint redirects to this observed HTTPS CDN file.
+        # Reject every downgrade, arbitrary redirect and credential destination.
+        if newurl != CDN_SOURCE:
+            raise ValueError("unexpected_feed_redirect")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def decode_feed(raw: bytes) -> dict[str, object]:
@@ -98,8 +108,10 @@ def download_feed(key_file: Path | None) -> bytes:
             "Accept-Encoding": "identity",
         },
     )
-    with build_opener(ProxyHandler({})).open(request, timeout=15) as response:
-        if response.geturl() != source:
+    with build_opener(ProxyHandler({}), FeedRedirectHandler()).open(
+        request, timeout=15
+    ) as response:
+        if response.geturl() not in {source, CDN_SOURCE}:
             raise ValueError("unexpected_redirect")
         return response.read(MAX_COMPRESSED + 1)
 
