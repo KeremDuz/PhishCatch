@@ -13,6 +13,22 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
+val releaseRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+if (releaseRequested) {
+    require(keystorePropertiesFile.exists()) {
+        "Release signing requires android/key.properties and the existing signing keystore."
+    }
+    for (property in listOf("keyAlias", "keyPassword", "storeFile", "storePassword")) {
+        require(!keystoreProperties.getProperty(property).isNullOrBlank()) {
+            "Missing release signing property: $property"
+        }
+    }
+    require(rootProject.file(keystoreProperties.getProperty("storeFile")).isFile) {
+        "The configured release signing keystore does not exist."
+    }
+}
 
 android {
     namespace = "com.phishcatch.phishcatch"
@@ -29,7 +45,6 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.phishcatch.phishcatch"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -50,11 +65,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

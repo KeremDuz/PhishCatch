@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -5,22 +7,23 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'screens/admin_screen.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
+import 'services/allsafe_api_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
 
-  // Set system UI overlay style for immersive dark experience
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
+      statusBarIconBrightness: Brightness.dark,
       systemNavigationBarColor: AppColors.bgDark,
-      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
 
   runApp(const PhishCatchApp());
+  unawaited(ApiService.shared.restoreWebSession());
 }
 
 class PhishCatchApp extends StatelessWidget {
@@ -29,7 +32,7 @@ class PhishCatchApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PhishCatch - Phishing Detection',
+      title: 'ALLSAFE · PhishCatch',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       initialRoute: _initialRoute(),

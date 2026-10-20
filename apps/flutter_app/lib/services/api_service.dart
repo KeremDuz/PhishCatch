@@ -540,6 +540,7 @@ class AdminLoginSession {
 }
 
 class PhishCatchApiService {
+  static const _managedBuild = bool.fromEnvironment('ALLSAFE_MANAGED_MODE');
   static const _allowDebugHttp = bool.fromEnvironment(
     'PHISHCATCH_ALLOW_DEV_HTTP',
   );
@@ -550,6 +551,11 @@ class PhishCatchApiService {
       'https://phishcatch-p4jc.onrender.com';
 
   static String get _baseUrl {
+    if (_managedBuild) {
+      throw StateError(
+        'Bu sürümde analiz ve yönetim için ALLSAFE bağlantısını kullanın.',
+      );
+    }
     if (_configuredBaseUrl.isNotEmpty) {
       final server = validateServerOrigin(
         _configuredBaseUrl,

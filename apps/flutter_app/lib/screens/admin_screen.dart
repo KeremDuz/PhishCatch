@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
@@ -264,10 +263,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   const SizedBox(width: 12),
                   Text(
                     'Admin',
-                    style: GoogleFonts.inter(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
                   ),
                 ],
               ),
@@ -353,7 +349,7 @@ class _AdminScreenState extends State<AdminScreen> {
           const SizedBox(width: 8),
           Text(
             'PhishCatch Admin',
-            style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w900),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
           ),
           const Spacer(),
           SegmentedButton<int>(
@@ -512,7 +508,7 @@ class _AdminScreenState extends State<AdminScreen> {
             child: Text(
               item.url,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.firaCode(fontSize: 12),
+              style: TextStyle(fontSize: 12),
             ),
           ),
           onTap: () => _loadDetail(item),
@@ -551,7 +547,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         detail.url,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.firaCode(
+                        style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
                         ),
@@ -602,7 +598,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 const Divider(height: 24),
                 Text(
                   'Katman Sonuclari',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w900),
+                  style: TextStyle(fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 8),
                 Expanded(
@@ -631,10 +627,7 @@ class _AdminScreenState extends State<AdminScreen> {
             children: [
               Text(
                 'Egitim Havuzu',
-                style: GoogleFonts.inter(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
               ),
               const Spacer(),
               IconButton(
@@ -735,7 +728,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                     sample.url,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.firaCode(fontSize: 12),
+                                    style: TextStyle(fontSize: 12),
                                   ),
                                   const SizedBox(height: 5),
                                   Text(
@@ -778,7 +771,7 @@ class _AdminScreenState extends State<AdminScreen> {
               Expanded(
                 child: Text(
                   '${stage['scanner'] ?? 'Scanner'}',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
               _verdictPill('${stage['verdict'] ?? 'unknown'}'),
@@ -800,7 +793,7 @@ class _AdminScreenState extends State<AdminScreen> {
               details.length > 900
                   ? '${details.substring(0, 900)}...'
                   : details,
-              style: GoogleFonts.firaCode(
+              style: TextStyle(
                 color: AppColors.textMuted,
                 fontSize: 11,
                 height: 1.35,
@@ -813,20 +806,8 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Widget _panel({required Widget child, EdgeInsetsGeometry? padding}) {
-    return Container(
+    return GlassCard(
       padding: padding ?? const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.bgCard.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.glassBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
-            blurRadius: 28,
-            offset: const Offset(0, 16),
-          ),
-        ],
-      ),
       child: child,
     );
   }
@@ -891,9 +872,7 @@ class _AdminScreenState extends State<AdminScreen> {
               style: const TextStyle(color: AppColors.textMuted),
             ),
           ),
-          Expanded(
-            child: Text(value, style: GoogleFonts.firaCode(fontSize: 12)),
-          ),
+          Expanded(child: Text(value, style: TextStyle(fontSize: 12))),
         ],
       ),
     );
