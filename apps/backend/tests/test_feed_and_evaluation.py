@@ -17,7 +17,7 @@ from app.core.pipeline import ScanningPipeline
 from app.core.risk_aggregator import RiskAggregator
 from app.ml.evaluation import grouped_temporal_indices, wilson_upper
 from app.models.schemas import StageResult
-from app.services import rdap_scanner, safe_http
+from app.services import feed_update, rdap_scanner, safe_http
 from app.services.feed_update import CDN_SOURCE, FeedRedirectHandler
 from app.services.local_phishing_feed import LocalPhishingFeed, url_digest
 from app.services.page_fetch import PageArtifact
@@ -62,6 +62,70 @@ def test_fresh_feed_hit_stops_before_fetch_and_miss_is_not_clean_evidence(tmp_pa
     assert result.final_verdict == "malicious"
     assert len(result.stages) == 1
     assert feed.scan("https://other.example/").verdict == "unknown"
+
+
+def test_certpl_domain_scope_includes_subdomains_but_not_parents_or_suffix_lookalikes(
+    tmp_path,
+):
+    path = tmp_path / "feed.json"
+    feed_update.write_snapshot(
+        feed_update.decode_certpl(b"bad.fixture.example\n"), path
+    )
+    scanner = LocalPhishingFeed(path)
+    for host in ("bad.fixture.example", "child.bad.fixture.example"):
+        result = scanner.scan(f"https://{host}/anything?a=1")
+        assert result.verdict == "malicious"
+        assert result.details["match_scope"] == "domain_and_subdomains"
+    for host in (
+        "fixture.example",
+        "other.fixture.example",
+        "notbad.fixture.example",
+        "bad.fixture.example.evil.example",
+    ):
+        assert scanner.scan(f"https://{host}/").verdict == "unknown"
+
+
+def test_certpl_expires_after_fifteen_minutes_and_removed_domains_disappear(tmp_path):
+    path = tmp_path / "feed.json"
+    data = feed_update.decode_certpl(b"bad.fixture.example\n")
+    data["fetched_at"] = (datetime.now(UTC) - timedelta(minutes=16)).isoformat()
+    feed_update.write_snapshot(data, path)
+    scanner = LocalPhishingFeed(path)
+    assert scanner.scan("https://bad.fixture.example/").status == "unavailable"
+    feed_update.write_snapshot(
+        feed_update.decode_certpl(b"new.fixture.example\n"), path
+    )
+    assert scanner.scan("https://bad.fixture.example/").verdict == "unknown"
+    assert scanner.scan("https://new.fixture.example/").verdict == "malicious"
+
+
+def test_certpl_304_refreshes_only_a_valid_previous_snapshot(tmp_path, monkeypatch):
+    path = tmp_path / "feed.json"
+    data = feed_update.decode_certpl(b"bad.fixture.example\n")
+    data["source_etag"] = '"fixture-version"'
+    data["fetched_at"] = (datetime.now(UTC) - timedelta(minutes=16)).isoformat()
+    feed_update.write_snapshot(data, path)
+
+    def unchanged(etag):
+        assert etag == '"fixture-version"'
+        return None, etag
+
+    monkeypatch.setattr(feed_update, "download_certpl", unchanged)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["feed_update", "--download", "--provider", "certpl", "--output", str(path)],
+    )
+    assert feed_update.main() == 0
+    assert LocalPhishingFeed(path).health()["available"] is True
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"", b"localhost\n", b"<html>not a list</html>\n", b"https://fixture.example/\n"],
+)
+def test_invalid_certpl_response_cannot_replace_a_snapshot(raw):
+    with pytest.raises(ValueError):
+        feed_update.decode_certpl(raw)
 
 
 @pytest.mark.parametrize("hours", [27, -1])

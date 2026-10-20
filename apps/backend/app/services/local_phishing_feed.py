@@ -1,4 +1,4 @@
-"""Private, fresh exact-URL hashes from the verified-online PhishTank feed."""
+"""Private fresh hashes from a declared phishing/warning-list provider."""
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ class LocalPhishingFeed(BaseScanner):
         self._signature: tuple[int, int] | None = None
         self._hashes: frozenset[str] = frozenset()
         self._fetched_at: datetime | None = None
+        self._source = "unconfigured"
 
     def health(self) -> dict[str, object]:
         with self._lock:
@@ -52,11 +53,14 @@ class LocalPhishingFeed(BaseScanner):
                     if stat.st_size > MAX_FEED_BYTES:
                         raise ValueError("feed_size")
                     data = json.loads(self.path.read_text(encoding="utf-8"))
-                    values = data["url_sha256"]
+                    source = data.get("source")
+                    values = data[
+                        "domain_sha256" if source == "certpl" else "url_sha256"
+                    ]
                     fetched = datetime.fromisoformat(data["fetched_at"])
                     if (
                         data.get("schema") != "phishcatch-feed-1"
-                        or data.get("source") != "phishtank"
+                        or source not in {"phishtank", "certpl"}
                         or fetched.tzinfo is None
                         or not isinstance(values, list)
                         or not 1 <= len(values) <= MAX_FEED_ENTRIES
@@ -71,10 +75,16 @@ class LocalPhishingFeed(BaseScanner):
                     self._hashes = frozenset(values)
                     self._fetched_at = fetched
                     self._signature = signature
+                    self._source = source
                 age = (datetime.now(UTC) - self._fetched_at).total_seconds()
+                maximum_age = (
+                    min(self.max_age_hours * 3600, 900)
+                    if self._source == "certpl"
+                    else self.max_age_hours * 3600
+                )
                 return {
-                    "available": -300 <= age <= self.max_age_hours * 3600,
-                    "source": "phishtank",
+                    "available": -300 <= age <= maximum_age,
+                    "source": self._source,
                     "fetched_at": self._fetched_at.isoformat(),
                     "entries": len(self._hashes),
                     "age_seconds": round(age),
@@ -83,7 +93,7 @@ class LocalPhishingFeed(BaseScanner):
                 self._signature = None
                 self._hashes = frozenset()
                 self._fetched_at = None
-                return {"available": False, "source": "phishtank"}
+                return {"available": False, "source": self._source}
 
     def scan(self, url: str) -> StageResult:
         with self._lock:
@@ -93,11 +103,20 @@ class LocalPhishingFeed(BaseScanner):
                     scanner=self.name,
                     verdict="unknown",
                     status="unavailable",
-                    reason="Fresh verified phishing feed unavailable",
+                    reason="Fresh warning feed unavailable",
                     details=info,
                 )
             try:
-                matched = url_digest(url) in self._hashes
+                if self._source == "certpl":
+                    host = urlsplit(canonicalize_url(url)).hostname or ""
+                    labels = host.lower().rstrip(".").split(".")
+                    matched = any(
+                        hashlib.sha256(".".join(labels[index:]).encode()).hexdigest()
+                        in self._hashes
+                        for index in range(max(0, len(labels) - 1))
+                    )
+                else:
+                    matched = url_digest(url) in self._hashes
             except ValueError:
                 return StageResult(
                     scanner=self.name,
@@ -109,8 +128,14 @@ class LocalPhishingFeed(BaseScanner):
                 scanner=self.name,
                 verdict="malicious" if matched else "unknown",
                 risk_score=0.97 if matched else 0.0,
-                reason="Verified phishing URL match"
+                reason="Known phishing/warning-list match"
                 if matched
-                else "No exact match in verified phishing feed",
-                details={**info, "match_scope": "exact_url", "matched": matched},
+                else "No match in declared warning list",
+                details={
+                    **info,
+                    "match_scope": "domain_and_subdomains"
+                    if self._source == "certpl"
+                    else "exact_url",
+                    "matched": matched,
+                },
             )

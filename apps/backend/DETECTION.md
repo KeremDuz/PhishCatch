@@ -4,7 +4,7 @@ Bu uygulama bir mezuniyet projesi prototipidir. Bir URL hakkında kesin güvenli
 
 ## Karar profili
 
-Varsayılan profilin gerekli bileşenleri: güncel yerel PhishTank listesi, aynı GET içeriğine dayanan yönlendirme/HTML incelemesi, URL modeli ve HTML modeli. RDAP kayıt bilgisi yardımcı bağlamdır; tarih bulunamaması temiz olduğuna dair kanıt oluşturmaz. URLhaus yalnız anahtar tanımlandığında eklenen zararlı yazılım kaynağıdır; phishing listesinin yerine geçmez. Google ve VirusTotal entegrasyonları isteğe bağlıdır. Kaynakların kullanım koşulları ve URL paylaşımı etkinleştirmeden önce değerlendirilmelidir.
+Varsayılan profilin gerekli bileşenleri: güncel yerel uyarı listesi, aynı GET içeriğine dayanan yönlendirme/HTML incelemesi, URL modeli ve HTML modeli. Yerel liste sağlayıcısı açıkça seçilir: PhishTank tam URL eşleşmesi veya CERT Polska alan adı ve alt alan adı eşleşmesi. RDAP kayıt bilgisi yardımcı bağlamdır; tarih bulunamaması temiz olduğuna dair kanıt oluşturmaz. URLhaus yalnız anahtar tanımlandığında eklenen zararlı yazılım kaynağıdır; phishing listesinin yerine geçmez. Google ve VirusTotal entegrasyonları isteğe bağlıdır. Kaynakların kullanım koşulları ve URL paylaşımı etkinleştirmeden önce değerlendirilmelidir.
 
 İlk URL yerel listede doğrulanmış phishing olarak bulunursa hedef sayfa indirilmez. Diğer durumlarda tek GET akışı en fazla beş HTTP/meta-refresh yönlendirmesi izler. Her bağlantıda DNS yanıtı kontrol edilir ve soket bu genel IP'ye sabitlenir; Host/SNI/sertifika doğrulaması korunur. İlk, ara ve son URL'ler itibar ve URL modeli kontrollerine girer. HTML analizi aynı son GET gövdesini kullanır. İstekler çerez, uygulama anahtarı veya kullanıcı hesabı taşımaz; form gönderilmez.
 
@@ -22,7 +22,15 @@ HTML/JSON gövdeleri ve gzip açılmış çıktı en fazla 1 MiB'dir; gzip artı
 
 GET ve HTML sonucu istekler arasında saklanmaz. Başarısız/eksik taramalar önbelleğe alınmaz; normal URL model/itibar girdileri en fazla 300 sn, itibar listesindeki eşleşmeme en fazla 60 sn saklanır. Yerel liste sorgusu önbelleğe alınmaz. Süresi dolan girdiler sonraki erişimde temizlenir; boşta çalışan RAM için arka plan silme garantisi yoktur. Modeller süreç boyunca sabittir; model değişiminden sonra servis yeniden başlatılarak önbellek sıfırlanır.
 
-## PhishTank listesinin hazırlanması
+## Yerel listenin hazırlanması
+
+Ev sunucusunda CERT Polska v2 etkinleştirilir. [Resmi kullanım koşulları](https://cert.pl/lista-ostrzezen/) her amaçla kullanıma izin verir; iş ortaklığı/onay ima edilmez. [Entegrasyon talimatı](https://cert.pl/en/warning-list/) gereği beş dakikada bir güncellenir; listedeki alan adı ve alt alan adları eşleşir, üst alan adı veya benzer son ekler eşleşmez. Silinen alan adları tam dosya değişimiyle kaldırılır. 15 dakikadan eski yerel kopya kullanılamaz. ETag/304 doğrulaması gereksiz dosya aktarımını azaltır. Kullanıcı URL'si kaynağa gönderilmez. Bu liste özellikle Polonya'yı hedefleyen kampanyalarla ilgilidir; küresel veya Türkiye'ye özel tam kapsama iddiası değildir.
+
+```sh
+python -m app.services.feed_update --download --provider certpl --output data/phishing-feed.json
+```
+
+PhishTank adaptörü de korunur. 21 Ekim 2026 kontrolünde resmi dosya/CDN isteği 404 döndüğünden bu sağlayıcının etkin olduğu iddia edilmez. Yalnız gözlenen sabit HTTPS CDN dosyasına yönlendirme kabul edilir; HTTP'ye düşülmez.
 
 Kaynak: [PhishTank geliştirici belgesi](https://phishtank.org/developer_info.php). Doğrulanmış ve çevrim içi kayıtların saatlik dosyası kullanılır. Otomatik indirme için uygulama anahtarı önerilir; anahtarsız indirmeler sınırlıdır. OpenPhish Community koşulları halka açık bu hizmet için varsayılan izin kabul edilmediğinden otomatik etkinleştirilmez.
 
@@ -35,7 +43,7 @@ python scripts/update_phishing_feed.py --download --app-key-file /private/phisht
 python scripts/update_phishing_feed.py --input /private/online-valid.json.bz2 --output data/phishing-feed.json
 ```
 
-Güncelleme sıkıştırılmış/gövde boyutunu sınırlar, yalnız doğrulanmış çevrim içi URL'lerin SHA-256 özetlerini saklar, dosyayı özel izinle atomik değiştirir. Başarısız güncelleme önceki dosyayı bozmaz. Uygulama kullanıcı URL'sini PhishTank'e göndermez. Anonim analiz eğitim verisi kaydetmez. Dosya/anahtar/ham liste Git'e konmaz. Docker imajında güncelleme modülü `python -m app.services.feed_update` olarak kullanılabilir. Anahtarlı indirmeyi saatlik, anahtarsız indirmeyi en fazla günde iki kez; her işi dışarıdan 90 sn süre sınırıyla zamanlayın. 26 saatten eski veya bozuk liste `unavailable` olur; eksik kaynak sessizce çıkarılarak yeşil sonuç üretilmez.
+Güncelleme sıkıştırılmış/gövde boyutunu sınırlar, yalnız URL/alan adı SHA-256 özetlerini saklar, dosyayı özel izinle atomik değiştirir. Başarısız güncelleme önceki dosyayı bozmaz. Anonim analiz eğitim verisi kaydetmez. Dosya/anahtar/ham liste Git'e konmaz. Docker imajında güncelleme modülü `python -m app.services.feed_update` olarak kullanılabilir. PhishTank anahtarlı indirmeyi saatlik, anahtarsız indirmeyi en fazla günde iki kez; CERT Polska indirmesini beş dakikada bir ve her işi dışarıdan 90 sn süre sınırıyla zamanlayın. PhishTank için 26 saat, CERT Polska için 15 dakika aşımı veya bozuk liste `unavailable` olur; eksik kaynak sessizce çıkarılarak yeşil sonuç üretilmez.
 
 ## Model değerlendirme ve yayına alma
 
