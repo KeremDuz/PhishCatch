@@ -84,6 +84,27 @@ class AnalysisResult {
   }
 
   bool get isMalicious => finalVerdict == 'malicious';
+
+  factory AnalysisResult.fromConsumerJson(Map<String, dynamic> json) {
+    final status = json['scan_status'];
+    final verdict = json['final_verdict'];
+    final valid =
+        json['contract_version'] == 'consumer-1' &&
+        json['url'] is String &&
+        const ['complete', 'partial', 'failed'].contains(status) &&
+        const ['clean', 'malicious', 'unknown'].contains(verdict);
+    return AnalysisResult(
+      url: json['url'] is String ? json['url'] as String : '',
+      normalizedUrl: json['url'] is String ? json['url'] as String : '',
+      finalVerdict: !valid || (verdict == 'clean' && status != 'complete')
+          ? 'unknown'
+          : verdict as String,
+      decidedBy: '',
+      stages: const [],
+      contractVersion: 'consumer-1',
+      scanStatus: valid ? status as String : 'failed',
+    );
+  }
   bool get isClean => finalVerdict == 'clean' && scanStatus == 'complete';
   bool get isUnknown => finalVerdict == 'unknown';
 

@@ -3,6 +3,7 @@ from urllib.parse import urljoin
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
+from app.services.safe_http import public_http_request
 from app.services.url_safety import validate_public_http_url
 
 
@@ -39,18 +40,14 @@ class UrlResolverScanner(BaseScanner):
                         },
                     )
 
-                response = requests.head(
-                    current_url,
-                    allow_redirects=False,
-                    timeout=5,
-                    headers=headers,
-                )
-                status_code = response.status_code
-
-                if not response.is_redirect:
+                with public_http_request(
+                    "HEAD", current_url, timeout=5, headers=headers
+                ) as response:
+                    status_code = response.status_code
+                    is_redirect = response.is_redirect
+                    location = response.headers.get("Location")
+                if not is_redirect:
                     break
-
-                location = response.headers.get("Location")
                 if not location:
                     break
 

@@ -2,6 +2,8 @@
 
 FastAPI tabanlı URL phishing analiz servisi ve Flutter tabanlı web/mobil istemci.
 
+Bağımsız tüketici sürümü mavi ve sade URL/QR arayüzü kullanır; ALLSAFE hesabı gerektirmez. `PHISHCATCH_CONSUMER_MODE=true` sürümü yalnız dar `/api/v1/public/analyze` sözleşmesine bağlanır; kurum yönetimi ve eğitim ekranları bu sürümde bulunmaz. Analiz sınırları için [teknik notlara](docs/analysis-limitations.md) bakın. Kurum için ALLSAFE entegrasyonu ayrı olarak korunur.
+
 ## Backend Akışı
 
 1. `UrlResolverScanner`: Redirect zincirini güvenli şekilde çözer.
