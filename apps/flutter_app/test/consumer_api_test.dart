@@ -91,6 +91,143 @@ void main() {
   );
 
   test(
+    'Pages consumer uses only the explicit HTTPS API without account credentials',
+    () async {
+      final requests = <http.Request>[];
+      final api = ApiService(
+        consumerMode: true,
+        browserOrigin: 'https://keremduz.github.io',
+        publicApiOrigin: 'https://public.example.test:8443',
+        standaloneBaseUrl: 'https://ignored.example.test',
+        allsafeBaseUrl: 'https://private.example.test',
+        csrfToken: () => 'must-not-leave-managed-session',
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({
+              'contract_version': 'consumer-1',
+              'url': 'https://example.com/',
+              'final_verdict': 'unknown',
+              'scan_status': 'partial',
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.dispose);
+      await api.restoreWebSession();
+      expect(requests, isEmpty);
+      for (final source in ['url', 'qr']) {
+        await api.analyzeUrl(
+          'https://example.com/',
+          source: source,
+          clientRequestId: 'a4223910-6f0d-4f5e-95ce-e94e3fd272c7',
+        );
+        final request = requests.last;
+        expect(request.url.origin, 'https://public.example.test:8443');
+        expect(request.url.path, '/api/v1/public/analyze');
+        expect(request.followRedirects, isFalse);
+        expect(jsonDecode(request.body)['source'], source);
+        expect(
+          jsonDecode(request.body)['client_request_id'],
+          'a4223910-6f0d-4f5e-95ce-e94e3fd272c7',
+        );
+        for (final name in [
+          'authorization',
+          'cookie',
+          'x-integration-key',
+          'x-csrf-token',
+        ]) {
+          expect(request.headers.containsKey(name), isFalse);
+        }
+      }
+      expect(api.isSignedIn, isFalse);
+      expect(api.isAllsafe, isFalse);
+      expect(
+        () => api.useAllsafe('https://different.example.test'),
+        throwsA(isA<ApiException>()),
+      );
+    },
+  );
+
+  test('explicit public browser API requires a bare HTTPS origin', () {
+    for (final origin in [
+      'http://localhost:8001',
+      'https://user:password@public.example.test',
+      'https://public.example.test/api',
+      'https://public.example.test?server=other',
+      'https://public.example.test#server',
+    ]) {
+      expect(
+        () => ApiService(
+          consumerMode: true,
+          allowDevelopmentHttp: true,
+          browserOrigin: 'https://keremduz.github.io',
+          publicApiOrigin: origin,
+          client: MockClient((_) async => http.Response('', 500)),
+        ),
+        throwsA(isA<ApiException>()),
+      );
+    }
+  });
+
+  test(
+    'managed browser ignores the public override and keeps its own origin',
+    () async {
+      final requests = <http.Request>[];
+      final api = ApiService(
+        managedOnly: true,
+        browserOrigin: 'https://private.example.test',
+        allsafeBaseUrl: 'https://ignored.example.test',
+        publicApiOrigin: 'https://public.example.test:8443',
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({'email': 'member@example.test'}),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.dispose);
+      await api.restoreWebSession();
+      expect(api.allsafeServer!.origin, 'https://private.example.test');
+      expect(requests.single.url.origin, 'https://private.example.test');
+      expect(
+        () => api.useAllsafe('https://public.example.test:8443'),
+        throwsA(isA<ApiException>()),
+      );
+    },
+  );
+
+  test(
+    'native consumer keeps its APK origin when a web override is present',
+    () async {
+      final requests = <http.Request>[];
+      final api = ApiService(
+        consumerMode: true,
+        standaloneBaseUrl: 'https://native.example.test:8443',
+        publicApiOrigin: 'https://web-only.example.test',
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({
+              'contract_version': 'consumer-1',
+              'url': 'https://example.com/',
+              'final_verdict': 'unknown',
+              'scan_status': 'partial',
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.dispose);
+      await api.analyzeUrl('https://example.com/', source: 'qr');
+      expect(requests.single.url.origin, 'https://native.example.test:8443');
+      expect(jsonDecode(requests.single.body)['source'], 'qr');
+    },
+  );
+
+  test(
     'consumer response never turns incomplete or invalid data into clean',
     () {
       for (final status in ['partial', 'failed', 'invalid']) {
