@@ -101,10 +101,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--html-class-weight", choices=("balanced", "none"), default="balanced")
     parser.add_argument("--promote", action="store_true", help="Run safe promotion after retraining.")
     parser.add_argument("--dry-run-promotion", action="store_true", help="Evaluate promotion gates without copying models.")
-    parser.add_argument("--min-rows", type=int, default=20)
-    parser.add_argument("--min-precision", type=float, default=0.8)
-    parser.add_argument("--min-recall", type=float, default=0.6)
-    parser.add_argument("--min-f1", type=float, default=0.7)
+    parser.add_argument("--min-rows", type=int, default=500)
+    parser.add_argument("--min-precision", type=float, default=0.98)
+    parser.add_argument("--min-recall", type=float, default=0.90)
+    parser.add_argument("--min-f1", type=float, default=0.94)
     return parser.parse_args()
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from pathlib import Path
 import sys
 from typing import Any
@@ -14,6 +15,8 @@ from app.core.config import settings
 from app.ml.feature_extractor import URL_FEATURE_COLUMNS, extract_features_dict
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS
 from app.storage import TrainingStore
+from app.ml.evaluation import PROVENANCE_COLUMNS
+from app.services.html_policy import site_key
 
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "generated"
@@ -72,24 +75,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_url_rows(samples: list[dict[str, Any]]) -> list[dict[str, float | int]]:
-    rows: list[dict[str, float | int]] = []
+def build_url_rows(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for sample in samples:
         features = sample.get("url_features")
         if not isinstance(features, dict):
             features = extract_features_dict(str(sample.get("final_url") or sample["url"]))
 
-        rows.append(feature_row(features, URL_FEATURE_COLUMNS, int(sample["label"])))
+        rows.append({**feature_row(features, URL_FEATURE_COLUMNS, int(sample["label"])), **provenance(sample)})
     return rows
 
 
-def build_html_rows(samples: list[dict[str, Any]]) -> list[dict[str, float | int]]:
-    rows: list[dict[str, float | int]] = []
+def build_html_rows(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for sample in samples:
         features = sample.get("html_features")
         if not isinstance(features, dict):
             continue
-        rows.append(feature_row(features, HTML_MODEL_FEATURE_COLUMNS, int(sample["label"])))
+        rows.append({**feature_row(features, HTML_MODEL_FEATURE_COLUMNS, int(sample["label"])), **provenance(sample)})
     return rows
 
 
@@ -101,8 +104,19 @@ def feature_row(features: dict[str, Any], columns: list[str], label: int) -> dic
     return row
 
 
-def write_dataset(path: Path, feature_columns: list[str], rows: list[dict[str, float | int]]) -> None:
-    fieldnames = feature_columns + [TARGET_COLUMN]
+def provenance(sample: dict[str, Any]) -> dict[str, object]:
+    url = str(sample.get("final_url") or sample["url"])
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+    return {"sample_id": digest(url), "domain_group": digest(site_key(url)),
+            "template_group": sample.get("html_hash") or "",
+            "observed_at": sample.get("observed_at") or "",
+            "label_source": sample.get("label_source") or "",
+            "verified_label": bool(sample.get("approved_for_training"))}
+
+
+def write_dataset(path: Path, feature_columns: list[str], rows: list[dict[str, Any]]) -> None:
+    fieldnames = feature_columns + [TARGET_COLUMN] + PROVENANCE_COLUMNS
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()

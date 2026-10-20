@@ -13,7 +13,7 @@ except Exception:  # pragma: no cover - optional production dependency
 
 
 _TLD_EXTRACTOR = (
-    tldextract.TLDExtract(suffix_list_urls=()) if tldextract is not None else None
+    tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None) if tldextract is not None else None
 )
 
 

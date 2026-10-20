@@ -1,0 +1,248 @@
+"""One bounded GET artifact per analysis; raw bodies never enter stage metadata/cache."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import re
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import monotonic
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup
+
+from app.services.safe_http import public_http_request
+from app.services.url_safety import validate_public_http_url
+
+MAX_HTML_BYTES = 1024 * 1024
+MAX_REDIRECTS = 5
+FETCH_BUDGET_SECONDS = 30.0
+HTML_TYPES = {"text/html", "application/xhtml+xml"}
+JSON_TYPES = {"application/json", "application/rdap+json"}
+
+
+class FetchFailure(requests.RequestException):
+    def __init__(self, code: str, safety: dict[str, object] | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.safety = safety
+
+
+@dataclass(frozen=True)
+class PageArtifact:
+    original_url: str
+    final_url: str
+    status_code: int
+    content_type: str
+    body: bytes
+    redirect_chain: tuple[dict[str, object], ...]
+    fetched_at: str
+
+    @property
+    def body_sha256(self) -> str:
+        return hashlib.sha256(self.body).hexdigest()
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "method": "GET",
+            "original_url": self.original_url,
+            "resolved_url": self.final_url,
+            "final_url": self.final_url,
+            "status_code": self.status_code,
+            "content_type": self.content_type,
+            "redirect_chain": list(self.redirect_chain),
+            "fetched_at": self.fetched_at,
+            "body_sha256": self.body_sha256,
+        }
+
+    def to_wire(self) -> dict[str, object]:
+        return {**self.metadata(), "body": base64.b64encode(self.body).decode("ascii")}
+
+    @classmethod
+    def from_wire(cls, value: dict[str, object]) -> PageArtifact:
+        body = base64.b64decode(str(value["body"]), validate=True)
+        if (
+            len(body) > MAX_HTML_BYTES
+            or hashlib.sha256(body).hexdigest() != value["body_sha256"]
+        ):
+            raise ValueError("Invalid buffered body")
+        for key in ("original_url", "final_url"):
+            if not isinstance(value[key], str) or len(value[key]) > 2048:
+                raise ValueError("Invalid buffered URL")
+        if (
+            not isinstance(value["redirect_chain"], list)
+            or len(value["redirect_chain"]) > MAX_REDIRECTS
+        ):
+            raise ValueError("Invalid redirect chain")
+        return cls(
+            str(value["original_url"]),
+            str(value["final_url"]),
+            int(value["status_code"]),
+            str(value["content_type"]),
+            body,
+            tuple(value["redirect_chain"]),
+            str(value["fetched_at"]),
+        )
+
+
+_session: ContextVar[dict[str, PageArtifact | FetchFailure] | None] = ContextVar(
+    "page_fetch", default=None
+)
+_use_worker: ContextVar[bool] = ContextVar("page_fetch_worker", default=False)
+
+
+@contextmanager
+def page_fetch_session(use_worker: bool = False):
+    token = _session.set({})
+    worker_token = _use_worker.set(use_worker)
+    try:
+        yield
+    finally:
+        _session.reset(token)
+        _use_worker.reset(worker_token)
+
+
+class BufferedPageResponse:
+    def __init__(self, page: PageArtifact) -> None:
+        self.page = page
+        self.headers: Mapping[str, str] = {"Content-Type": page.content_type}
+
+    def raise_for_status(self) -> None:
+        if self.page.status_code >= 400:
+            raise requests.HTTPError("Target returned an unsuccessful HTTP status")
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+        for start in range(0, len(self.page.body), chunk_size):
+            yield self.page.body[start : start + chunk_size]
+
+    def close(self) -> None:
+        pass
+
+
+def _meta_refresh(body: bytes, url: str) -> str | None:
+    soup = BeautifulSoup(body, "lxml")
+    for meta in soup.find_all("meta", attrs={"http-equiv": True}, limit=30):
+        if str(meta.get("http-equiv", "")).lower() != "refresh":
+            continue
+        match = re.fullmatch(
+            r"\s*\d+(?:\.\d+)?\s*;\s*url\s*=\s*(.+?)\s*",
+            str(meta.get("content", "")),
+            re.IGNORECASE,
+        )
+        if match:
+            target = match.group(1).strip("\"'")
+            base = soup.find("base", href=True)
+            return urljoin(urljoin(url, str(base.get("href"))) if base else url, target)
+    return None
+
+
+def fetch_page(url: str, headers: Mapping[str, str] | None = None) -> PageArtifact:
+    cache = _session.get()
+    if cache is not None and url in cache:
+        existing = cache[url]
+        if isinstance(existing, FetchFailure):
+            raise existing
+        return existing
+    try:
+        if _use_worker.get():
+            from app.services.worker_process import WorkerFailure, run_worker
+
+            try:
+                result = run_worker("fetch", {"url": url}, timeout=35)
+                if "error" in result:
+                    raise FetchFailure(str(result["error"]), result.get("safety"))
+                page = PageArtifact.from_wire(result["page"])
+            except WorkerFailure as exc:
+                raise FetchFailure(exc.code) from None
+            except (KeyError, ValueError, TypeError):
+                raise FetchFailure("invalid_worker_response") from None
+        else:
+            page = _fetch_page(url, headers)
+    except FetchFailure as exc:
+        if cache is not None:
+            cache[url] = exc
+        raise
+    except requests.RequestException as exc:
+        failure = FetchFailure("fetch_failed")
+        if cache is not None:
+            cache[url] = failure
+        raise failure from exc
+    if cache is not None:
+        cache[url] = page
+        cache[page.final_url] = page
+    return page
+
+
+def _fetch_page(url: str, headers: Mapping[str, str] | None) -> PageArtifact:
+    if headers is None:
+        headers = {
+            "User-Agent": "PhishCatch/0.2 (+https://github.com/KeremDuz/PhishCatch)",
+            "Accept": "text/html,application/xhtml+xml,application/json,application/rdap+json;q=0.9",
+        }
+    current = url
+    chain: list[dict[str, object]] = []
+    deadline = monotonic() + FETCH_BUDGET_SECONDS
+    for _ in range(MAX_REDIRECTS + 1):
+        if monotonic() >= deadline:
+            raise FetchFailure("fetch_deadline")
+        safety = validate_public_http_url(current)
+        if not safety.is_safe:
+            raise FetchFailure(
+                "unsafe_destination",
+                {**(safety.details or {}), "reason": safety.reason},
+            )
+        with public_http_request(
+            "GET",
+            current,
+            headers=headers,
+            timeout=min(5.0, max(0.01, deadline - monotonic())),
+            allow_gzip=True,
+        ) as response:
+            status = response.status_code
+            content_type = response.headers.get("Content-Type", "")
+            next_url = None
+            kind = "http"
+            if response.is_redirect:
+                location = response.headers.get("Location")
+                if not location:
+                    raise FetchFailure("redirect_without_location")
+                next_url = urljoin(current, location)
+                body = b""
+            else:
+                body = bytearray()
+                media_type = content_type.split(";", 1)[0].strip().lower()
+                if status < 400 and media_type in HTML_TYPES | JSON_TYPES:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if monotonic() >= deadline:
+                            raise FetchFailure("fetch_deadline")
+                        if len(body) + len(chunk) > MAX_HTML_BYTES:
+                            raise FetchFailure("html_too_large")
+                        body.extend(chunk)
+                    next_url = (
+                        _meta_refresh(bytes(body), current)
+                        if media_type in HTML_TYPES
+                        else None
+                    )
+                    kind = "meta_refresh"
+                if not next_url:
+                    return PageArtifact(
+                        url,
+                        current,
+                        status,
+                        content_type,
+                        bytes(body),
+                        tuple(chain),
+                        datetime.now(UTC).isoformat(),
+                    )
+            if len(next_url) > 2048 or next_url == current:
+                raise FetchFailure("invalid_redirect")
+            chain.append(
+                {"from": current, "to": next_url, "status_code": status, "kind": kind}
+            )
+            current = next_url
+    raise FetchFailure("redirect_limit")

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
+import math
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,7 +75,7 @@ def main() -> int:
         args.registry_path.parent.mkdir(parents=True, exist_ok=True)
         args.registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
 
-    return 0
+    return 1 if any(result["status"] == "rejected" for result in promotions.values()) else 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,12 +85,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--active-url-model", type=Path, default=DEFAULT_ACTIVE_MODELS["url"])
     parser.add_argument("--active-html-model", type=Path, default=DEFAULT_ACTIVE_MODELS["html"])
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
-    parser.add_argument("--min-rows", type=int, default=20)
-    parser.add_argument("--min-precision", type=float, default=0.8)
-    parser.add_argument("--min-recall", type=float, default=0.6)
-    parser.add_argument("--min-f1", type=float, default=0.7)
+    parser.add_argument("--min-rows", type=int, default=500, help="Minimum holdout rows, not total training rows.")
+    parser.add_argument("--min-precision", type=float, default=0.98)
+    parser.add_argument("--min-recall", type=float, default=0.90)
+    parser.add_argument("--min-f1", type=float, default=0.94)
     parser.add_argument("--dry-run", action="store_true", help="Evaluate gates without copying active model files.")
-    parser.add_argument("--force", action="store_true", help="Promote trained candidates even if metric gates fail.")
+    parser.add_argument("--force", action="store_true", help="Deprecated; cannot bypass evaluation gates.")
     parser.add_argument("--no-backup", action="store_true", help="Overwrite active model files without creating backups.")
     return parser.parse_args()
 
@@ -138,7 +140,10 @@ def evaluate_and_promote(
         min_recall=min_recall,
         min_f1=min_f1,
     )
-    if gate_reasons and not force:
+    proof = (model_result.get("validation") or {}).get("evaluation") or {}
+    if proof.get("model_sha256") != hashlib.sha256(candidate_path.read_bytes()).hexdigest():
+        gate_reasons.append("Candidate hash does not match evaluated model")
+    if gate_reasons:
         return {
             "status": "rejected",
             "reason": "; ".join(gate_reasons),
@@ -187,19 +192,42 @@ def gate_failures(
     min_f1: float,
 ) -> list[str]:
     failures: list[str] = []
-    row_count = int(model_result.get("row_count") or 0)
     validation = model_result.get("validation") or {}
+    proof = validation.get("evaluation") or {}
+    row_count = int(proof.get("test_rows") or 0)
     precision = float(validation.get("precision") or 0.0)
     recall = float(validation.get("recall") or 0.0)
     f1 = float(validation.get("f1") or 0.0)
 
-    if row_count < min_rows:
+    if proof.get("strategy") != "grouped-temporal-v1" or proof.get("verified_labels") is not True or proof.get("refit_on_holdout") is not False:
+        failures.append("Independent grouped temporal holdout required")
+    if any(proof.get(key) != 0 for key in ("domain_overlap", "template_overlap", "feature_overlap")):
+        failures.append("Overlapping or unverified evaluation cohorts")
+    if int(proof.get("test_unique_domains") or 0) < 100:
+        failures.append("Holdout needs at least 100 distinct domain groups")
+    if proof.get("threshold") != 0.5:
+        failures.append("Evaluation threshold must match the 0.5 model decision threshold")
+    for key in ("dataset_sha256", "model_sha256", "test_identity_sha256"):
+        value = proof.get(key)
+        if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            failures.append(f"Missing {key}")
+    counts = validation.get("test_label_counts") or {}
+    if int(counts.get("0", counts.get(0, 0))) < 300 or int(counts.get("1", counts.get(1, 0))) < 100:
+        failures.append("Holdout needs at least 300 clean and 100 phishing samples")
+    fpr = float(validation.get("false_positive_rate", 1))
+    fpr_upper = float(validation.get("false_positive_rate_upper_95", 1))
+    if not all(math.isfinite(value) and 0 <= value <= 1 for value in (precision, recall, f1, fpr, fpr_upper)):
+        failures.append("Invalid evaluation metrics")
+    if fpr > 0.01 or fpr_upper > 0.02:
+        failures.append("False positive rate exceeds 1% or its 95% upper bound exceeds 2%")
+
+    if row_count < max(500, min_rows):
         failures.append(f"row_count {row_count} < min_rows {min_rows}")
-    if precision < min_precision:
+    if precision < max(0.98, min_precision):
         failures.append(f"precision {precision} < min_precision {min_precision}")
-    if recall < min_recall:
+    if recall < max(0.90, min_recall):
         failures.append(f"recall {recall} < min_recall {min_recall}")
-    if f1 < min_f1:
+    if f1 < max(0.94, min_f1):
         failures.append(f"f1 {f1} < min_f1 {min_f1}")
     return failures
 

@@ -97,6 +97,8 @@ class Settings(BaseModel):
     scanner_cache_max_entries: int = int(os.getenv("SCANNER_CACHE_MAX_ENTRIES", "2048"))
 
     urlhaus_auth_key: str | None = Field(default_factory=lambda: os.getenv("URLHAUS_AUTH_KEY"))
+    phishing_feed_path: str = Field(default_factory=lambda: os.getenv("PHISHING_FEED_PATH", str(BACKEND_ROOT / "data" / "phishing-feed.json")))
+    phishing_feed_max_age_hours: int = Field(default_factory=lambda: int(os.getenv("PHISHING_FEED_MAX_AGE_HOURS", "26")))
 
     training_db_path: str = os.getenv(
         "TRAINING_DB_PATH",

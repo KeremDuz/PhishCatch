@@ -228,7 +228,8 @@ def test_optional_browser_flag_cannot_launch_an_unisolated_browser(monkeypatch):
         scanner, "_safe_get", lambda url, headers: (DynamicResponse(), url, [])
     )
     result = scanner.scan("https://original.example/")
-    assert result.status == "unavailable" and result.verdict == "unknown"
+    assert result.status == "completed" and result.verdict == "unknown"
+    assert result.details["dynamic_analysis"]["required"] is True
     assert "isolated" in result.details["browser_render"]["reason"]
 
 

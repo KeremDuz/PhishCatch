@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +21,6 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -32,6 +32,7 @@ from app.core.config import settings
 from app.ml.incremental_model import IncrementalBinaryClassifier
 from app.ml.feature_extractor import URL_FEATURE_COLUMNS
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS
+from app.ml.evaluation import grouped_temporal_indices, identity_digest, wilson_upper
 from scripts.export_training_datasets import HTML_OUTPUT_NAME, URL_OUTPUT_NAME, export_training_datasets
 from train_html_model import build_model as build_html_model
 from train_html_model import build_sample_weights
@@ -205,7 +206,7 @@ def train_candidate(
     if missing_columns:
         return skipped(name, dataset_path, f"Dataset missing feature columns: {missing_columns[:5]}")
 
-    dataframe = dataframe[feature_columns + [TARGET_COLUMN]].fillna(0.0)
+    dataframe[feature_columns] = dataframe[feature_columns].fillna(0.0)
     labels = dataframe[TARGET_COLUMN].astype(int)
     label_counts = Counter(int(value) for value in labels)
     if len(dataframe) < min_samples:
@@ -216,13 +217,12 @@ def train_candidate(
         return skipped(name, dataset_path, f"Need at least 2 rows per class, found {dict(label_counts)}", label_counts)
 
     features = dataframe[feature_columns]
-    x_train, x_test, y_train, y_test = train_test_split(
-        features,
-        labels,
-        test_size=test_size,
-        random_state=seed,
-        stratify=labels,
-    )
+    try:
+        train_indices, test_indices = grouped_temporal_indices(dataframe, feature_columns, test_size)
+    except ValueError as exc:
+        return skipped(name, dataset_path, str(exc), label_counts)
+    x_train, x_test = features.loc[train_indices], features.loc[test_indices]
+    y_train, y_test = labels.loc[train_indices], labels.loc[test_indices]
 
     model = build_model()
     if sample_weight_mode == "balanced":
@@ -236,14 +236,19 @@ def train_candidate(
     predictions = (probabilities >= threshold).astype(int)
     metrics = calculate_metrics(y_test, predictions, probabilities)
 
-    final_model = build_model()
-    if sample_weight_mode == "balanced":
-        sample_weight, class_weights = build_sample_weights(labels, "balanced")
-        final_model.fit(features, labels, sample_weight=sample_weight)
-    else:
-        final_model.fit(features, labels)
-
+    # The persisted candidate is exactly the evaluated model. Never refit it on
+    # its holdout and then attach metrics from a different estimator.
+    final_model = model
     joblib.dump(final_model, model_path, compress=3)
+    proof = {"strategy": "grouped-temporal-v1", "dataset_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
+             "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+             "train_rows": len(train_indices), "test_rows": len(test_indices),
+             "test_unique_domains": int(dataframe.loc[test_indices, "domain_group"].nunique()),
+             "threshold": threshold,
+             "test_identity_sha256": identity_digest(dataframe.loc[test_indices, "sample_id"]),
+             "domain_overlap": 0, "template_overlap": 0, "feature_overlap": 0,
+             "refit_on_holdout": False, "verified_labels": True}
+    metrics["evaluation"] = proof
     metadata_path = model_path.with_suffix(".metadata.json")
     metadata = {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -301,6 +306,9 @@ def calculate_metrics(y_true: pd.Series, y_pred, y_prob) -> dict[str, Any]:
         if set(label_counts) == {0, 1}
         else None
     )
+    tn, fp = metrics["confusion_matrix"][0]
+    metrics["false_positive_rate"] = fp / (tn + fp) if tn + fp else 1.0
+    metrics["false_positive_rate_upper_95"] = wilson_upper(fp, tn + fp)
     return metrics
 
 
