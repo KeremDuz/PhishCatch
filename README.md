@@ -2,6 +2,22 @@
 
 FastAPI tabanlı URL phishing analiz servisi ve Flutter tabanlı web/mobil istemci.
 
+Bağımsız tüketici sürümü mavi ve sade URL/QR arayüzü kullanır; ALLSAFE hesabı gerektirmez. `PHISHCATCH_CONSUMER_MODE=true` sürümü yalnız dar `/api/v1/public/analyze` sözleşmesine bağlanır; kurum yönetimi ve eğitim ekranları bu sürümde bulunmaz. Analiz sınırları için [teknik notlara](docs/analysis-limitations.md) bakın. Kurum için ALLSAFE entegrasyonu ayrı olarak korunur.
+
+## Bağımsız web yayını
+
+PhishCatch web arayüzü `https://keremduz.github.io/PhishCatch/` altında statik olarak yayımlanabilir. Analizler ev sunucusundaki `https://keremserver.tailf2e48d.ts.net:8443/api/v1/public/analyze` adresinde çalışmaya devam eder; model ve veritabanı Pages’e taşınmaz. Kurum paneli bu yayından ayrıdır.
+
+`.github/workflows/pages.yml`, `main` güncellemelerinde veya `main` üzerinde elle başlatıldığında Flutter `3.47.7` ve kilitli bağımlılıklarla testi, analizi ve derlemeyi yürütür. Dağıtım başlangıçta kapalıdır: yalnız ayrıca onaylanıp depo değişkeni `PHISHCATCH_PAGES_ENABLED=true` yapıldığında çalışır. İş akışı Pages sitesini kendi kendine etkinleştirmez; onaydan sonra depo için **Settings → Pages → Source: GitHub Actions** ayrıca ayarlanır. İş akışı [GitHub’ın özel Pages iş akışı modelini](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) kullanır; kullanıcı parolası veya uygulama anahtarı içermez.
+
+Yerel Pages derlemesi:
+
+```powershell
+./scripts/build_public_web.ps1 -StaticPages -PhishCatchApiBaseUrl 'https://keremserver.tailf2e48d.ts.net:8443' -OutputDirectory './build/pages'
+```
+
+`-StaticPages`, varsayılan taban yolu `/PhishCatch/` ile birlikte yalnız tüketici web sürümünde kullanılan `PHISHCATCH_PUBLIC_API_ORIGIN` değerini derleme sırasında belirler. Değer yalnız HTTPS kök adresi olabilir; adres çubuğu, sorgu parametresi veya kullanıcı girişiyle değişmez. Varsayılan web derlemesi kendi kaynağına bağlanır; APK ve ALLSAFE oturum kuralları korunur. Gerekirse `-BaseHref '/baska-yol/'` verilebilir. Pages yalnız anonim analiz API’sini kullanır; oturum, entegrasyon veya CSRF anahtarı göndermez. API tarafında yalnız `https://keremduz.github.io` kaynağına ve gereken analiz yoluna CORS izni verilmelidir. Eski Flutter önbelleği temizlenirken diğer `github.io` projelerinin service worker ve önbellek kayıtları korunur.
+
 ## Backend Akışı
 
 1. `UrlResolverScanner`: Redirect zincirini güvenli şekilde çözer.

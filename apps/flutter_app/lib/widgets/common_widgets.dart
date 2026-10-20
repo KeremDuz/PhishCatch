@@ -1,77 +1,117 @@
-import 'dart:ui';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
 import '../theme/app_theme.dart';
 
+class AppBrand extends StatelessWidget {
+  final bool compact;
+  const AppBrand({super.key, this.compact = false});
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: compact ? 36 : 42,
+        height: compact ? 36 : 42,
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.link_rounded, color: Colors.white, size: 27),
+      ),
+      SizedBox(width: compact ? 10 : 12),
+      Flexible(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'PhishCatch',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 16 : 19,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+class StatusBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const StatusBadge({
+    super.key,
+    required this.label,
+    this.color = AppColors.primary,
+  });
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withValues(alpha: 0.16)),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+    ),
+  );
+}
+
+class NoticeCard extends StatelessWidget {
+  final String message;
+  final Color color;
+  final IconData icon;
+  const NoticeCard({
+    super.key,
+    required this.message,
+    this.color = AppColors.warning,
+    this.icon = Icons.info_outline,
+  });
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: color, height: 1.5, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Compatibility wrappers for existing administration and batch screens.
 class CyberBackdrop extends StatelessWidget {
   final Widget child;
   final bool dense;
-
   const CyberBackdrop({super.key, required this.child, this.dense = false});
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(gradient: AppColors.bgGradient),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Align(
-            alignment: Alignment.topCenter,
-            child: FractionallySizedBox(
-              widthFactor: 1.0,
-              heightFactor: dense ? 0.42 : 0.36,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      AppColors.primary.withValues(alpha: 0.11),
-                      AppColors.electric.withValues(alpha: 0.04),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.045),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomLeft,
-                    end: Alignment.topRight,
-                    colors: [
-                      AppColors.electric.withValues(alpha: 0.035),
-                      Colors.transparent,
-                      AppColors.primary.withValues(alpha: 0.035),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          child,
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      ColoredBox(color: AppColors.bgDark, child: child);
 }
 
-/// Glassmorphism container widget
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -80,95 +120,56 @@ class GlassCard extends StatelessWidget {
   final Color? borderColor;
   final double? width;
   final double? height;
-
   const GlassCard({
     super.key,
     required this.child,
     this.padding,
     this.margin,
-    this.borderRadius = 8,
+    this.borderRadius = 16,
     this.borderColor,
     this.width,
     this.height,
   });
-
   @override
-  Widget build(BuildContext context) {
-    // Web'de BackdropFilter aşırı FPS düşüşüne neden olur.
-    // Görüntüyü aynı tutmak için Web tarafında blur yerine yarı saydam bir arka plan kullanıyoruz.
-    final decoration = BoxDecoration(
-      color: kIsWeb
-          ? AppColors.bgCard.withValues(alpha: 0.94)
-          : AppColors.glassWhite,
-      borderRadius: BorderRadius.circular(borderRadius),
-      border: Border.all(color: borderColor ?? AppColors.glassBorder, width: 1),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.26),
-          blurRadius: 24,
-          offset: const Offset(0, 16),
-        ),
-      ],
-    );
-
-    final content = Container(
-      padding: padding ?? const EdgeInsets.all(20),
-      decoration: decoration,
-      child: child,
-    );
-
-    return Container(
-      width: width,
-      height: height,
-      margin: margin,
-      child: kIsWeb
-          ? ClipRRect(
-              borderRadius: BorderRadius.circular(borderRadius),
-              child: content,
-            )
-          : ClipRRect(
-              borderRadius: BorderRadius.circular(borderRadius),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: content,
-              ),
-            ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    margin: margin,
+    child: Material(
+      color: AppColors.bgCard,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(borderRadius),
+        side: BorderSide(color: borderColor ?? AppColors.glassBorder),
+      ),
+      child: Padding(
+        padding: padding ?? const EdgeInsets.all(24),
+        child: child,
+      ),
+    ),
+  );
 }
 
-/// Gradient text widget
 class GradientText extends StatelessWidget {
   final String text;
   final TextStyle? style;
   final Gradient gradient;
-
   const GradientText({
     super.key,
     required this.text,
     this.style,
     this.gradient = AppColors.primaryGradient,
   });
-
   @override
-  Widget build(BuildContext context) {
-    return ShaderMask(
-      blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) => gradient.createShader(
-        Rect.fromLTWH(0, 0, bounds.width, bounds.height),
-      ),
-      child: Text(text, style: style),
-    );
-  }
+  Widget build(BuildContext context) =>
+      Text(text, style: style?.copyWith(color: AppColors.primary));
 }
 
-/// Animated glow container
 class GlowContainer extends StatelessWidget {
   final Widget child;
   final Color glowColor;
   final double blurRadius;
   final double borderRadius;
-
   const GlowContainer({
     super.key,
     required this.child,
@@ -176,128 +177,38 @@ class GlowContainer extends StatelessWidget {
     this.blurRadius = 20,
     this.borderRadius = 20,
   });
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(borderRadius),
-        boxShadow: [
-          BoxShadow(
-            color: glowColor.withValues(alpha: 0.3),
-            blurRadius: blurRadius,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
+  Widget build(BuildContext context) => child;
 }
 
-/// Pulsating dot indicator
-class PulsatingDot extends StatefulWidget {
+class PulsatingDot extends StatelessWidget {
   final Color color;
   final double size;
-
   const PulsatingDot({super.key, this.color = AppColors.safe, this.size = 10});
-
   @override
-  State<PulsatingDot> createState() => _PulsatingDotState();
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  );
 }
 
-class _PulsatingDotState extends State<PulsatingDot>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1500),
-      vsync: this,
-    )..repeat(reverse: true);
-    _animation = Tween<double>(
-      begin: 0.4,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        return Container(
-          width: widget.size,
-          height: widget.size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: widget.color,
-            boxShadow: [
-              BoxShadow(
-                color: widget.color.withValues(alpha: _animation.value * 0.6),
-                blurRadius: widget.size * _animation.value,
-                spreadRadius: widget.size * 0.2 * _animation.value,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// Shield icon with verdict coloring
 class VerdictShield extends StatelessWidget {
   final String verdict;
   final double size;
-
   const VerdictShield({super.key, required this.verdict, this.size = 80});
-
-  Color get _color {
-    switch (verdict) {
-      case 'malicious':
-        return AppColors.danger;
-      case 'clean':
-        return AppColors.safe;
-      default:
-        return AppColors.warning;
-    }
-  }
-
-  IconData get _icon {
-    switch (verdict) {
-      case 'malicious':
-        return Icons.gpp_bad_rounded;
-      case 'clean':
-        return Icons.verified_user_rounded;
-      default:
-        return Icons.shield_rounded;
-    }
-  }
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: _color.withValues(alpha: 0.4),
-            blurRadius: 30,
-            spreadRadius: 5,
-          ),
-        ],
-      ),
-      child: Icon(_icon, size: size, color: _color),
-    );
-  }
+  Widget build(BuildContext context) => Icon(
+    verdict == 'malicious'
+        ? Icons.gpp_bad_outlined
+        : verdict == 'clean'
+        ? Icons.verified_user_outlined
+        : Icons.shield_outlined,
+    size: size,
+    color: verdict == 'malicious'
+        ? AppColors.danger
+        : verdict == 'clean'
+        ? AppColors.safe
+        : AppColors.warning,
+  );
 }

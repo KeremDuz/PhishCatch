@@ -16,7 +16,13 @@ class UrlSafetyResult:
 
 
 def validate_public_http_url(url: str) -> UrlSafetyResult:
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        # Accessing .port also rejects malformed/out-of-range authorities.
+        if parsed.port == 0:
+            return UrlSafetyResult(is_safe=False, reason="URL port is invalid")
+    except ValueError:
+        return UrlSafetyResult(is_safe=False, reason="URL authority is invalid")
 
     if parsed.scheme not in {"http", "https"}:
         return UrlSafetyResult(
@@ -97,13 +103,16 @@ def _resolve_hostname(hostname: str) -> list[ipaddress.IPv4Address | ipaddress.I
 
 
 def _is_blocked_ip(ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return any(
-        [
-            ip_address.is_private,
-            ip_address.is_loopback,
-            ip_address.is_link_local,
-            ip_address.is_multicast,
-            ip_address.is_reserved,
-            ip_address.is_unspecified,
-        ]
-    )
+    # is_private alone does not cover CGNAT (100.64/10, including Tailscale).
+    # Multicast can be is_global on some Python versions; reject it explicitly.
+    if not ip_address.is_global or ip_address.is_reserved or ip_address.is_multicast:
+        return True
+    # Reject IPv6 transition addresses rather than letting an encoded IPv4
+    # destination bypass the policy or depend on the host's routing setup.
+    if isinstance(ip_address, ipaddress.IPv6Address):
+        return (
+            ip_address.ipv4_mapped is not None
+            or ip_address.sixtofour is not None
+            or ip_address.teredo is not None
+        )
+    return False

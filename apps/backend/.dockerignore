@@ -23,3 +23,16 @@ feed_*_results*.json
 feed_*_review_*.csv
 model_benchmark_summary.csv
 *.log
+models/
+data/
+*.pkl
+**/*.pkl
+*.joblib
+**/*.joblib
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.pem
+*.key
+*.pfx

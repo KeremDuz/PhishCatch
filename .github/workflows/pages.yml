@@ -1,0 +1,65 @@
+name: PhishCatch Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phishcatch-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+      - name: Install locked dependencies
+        working-directory: apps/flutter_app
+        run: flutter pub get --enforce-lockfile
+      - name: Test consumer and managed boundaries
+        working-directory: apps/flutter_app
+        run: flutter test --no-pub
+      - name: Analyze Flutter sources
+        working-directory: apps/flutter_app
+        run: flutter analyze --no-pub
+      - name: Build independent consumer web
+        shell: pwsh
+        run: >-
+          ./scripts/build_public_web.ps1
+          -StaticPages
+          -PhishCatchApiBaseUrl 'https://keremserver.tailf2e48d.ts.net:8443'
+          -OutputDirectory '${{ runner.temp }}/phishcatch-pages'
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/phishcatch-pages
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.PHISHCATCH_PAGES_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: false
+      - name: Deploy static site
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_service.dart';
 import 'server_origin.dart';
+import 'session_transport.dart' as transport;
 
 class ApiException implements Exception {
   final String message;
@@ -19,14 +20,14 @@ class ApiException implements Exception {
 }
 
 class _MobileSession {
-  final String token;
-  final DateTime expiresAt;
+  final String? token;
+  final DateTime? expiresAt;
   final Map<String, dynamic> user;
 
   _MobileSession(this.token, this.expiresAt, this.user);
 }
 
-/// ALLSAFE authentication is deliberately held only in this process's memory.
+/// Native tokens stay in memory; web sessions use same-origin HttpOnly cookies.
 class ApiService extends ChangeNotifier {
   static const allowDebugHttp = bool.fromEnvironment(
     'PHISHCATCH_ALLOW_DEV_HTTP',
@@ -34,12 +35,26 @@ class ApiService extends ChangeNotifier {
   static const _configuredStandalone = String.fromEnvironment(
     'PHISHCATCH_API_BASE_URL',
   );
+  static const _configuredAllsafe = String.fromEnvironment(
+    'ALLSAFE_API_BASE_URL',
+  );
+  static const _configuredPublicApiOrigin = String.fromEnvironment(
+    'PHISHCATCH_PUBLIC_API_ORIGIN',
+  );
+  static const _managedBuild = bool.fromEnvironment('ALLSAFE_MANAGED_MODE');
+  static const _consumerBuild = bool.fromEnvironment(
+    'PHISHCATCH_CONSUMER_MODE',
+  );
   static const _renderServer = 'https://phishcatch-p4jc.onrender.com';
   static final ApiService shared = ApiService();
 
   final http.Client _client;
   final bool _ownsClient;
   final bool _allowDevelopmentHttp;
+  final bool managedOnly;
+  final bool consumerMode;
+  final String? _browserOrigin;
+  final String? Function() _csrfToken;
   final Uri _standaloneServer;
   Uri? _allsafeServer;
   _MobileSession? _session;
@@ -49,16 +64,72 @@ class ApiService extends ChangeNotifier {
     http.Client? client,
     String? standaloneBaseUrl,
     bool allowDevelopmentHttp = allowDebugHttp,
-  }) : _client = client ?? http.Client(),
+    this.managedOnly = _managedBuild,
+    this.consumerMode = _consumerBuild,
+    String? allsafeBaseUrl,
+    String? browserOrigin,
+    String publicApiOrigin = _configuredPublicApiOrigin,
+    String? Function()? csrfToken,
+  }) : _client =
+           client ??
+           (consumerMode ? http.Client() : transport.createSessionClient()),
        _ownsClient = client == null,
+       _browserOrigin = browserOrigin ?? transport.browserOrigin(),
+       _csrfToken = csrfToken ?? transport.readCsrfToken,
        _allowDevelopmentHttp = allowDevelopmentHttp,
-       _standaloneServer = parseServerOrigin(
-         standaloneBaseUrl ?? defaultStandaloneBaseUrl,
+       _standaloneServer = _standaloneOrigin(
+         consumerMode: consumerMode,
+         managedOnly: managedOnly,
+         browserOrigin: browserOrigin ?? transport.browserOrigin(),
+         publicApiOrigin: publicApiOrigin,
+         standaloneBaseUrl: standaloneBaseUrl,
          allowDevelopmentHttp: allowDevelopmentHttp,
-       );
+       ) {
+    final configured = allsafeBaseUrl ?? _configuredAllsafe;
+    if (consumerMode && managedOnly) {
+      throw const ApiException('Uygulama yapılandırması geçersiz.');
+    }
+    if (!consumerMode && (managedOnly || configured.isNotEmpty)) {
+      final origin = _browserOrigin ?? configured;
+      _allsafeServer = parseServerOrigin(
+        origin,
+        allowDevelopmentHttp: allowDevelopmentHttp,
+      );
+    }
+  }
+
+  static Uri _standaloneOrigin({
+    required bool consumerMode,
+    required bool managedOnly,
+    required String? browserOrigin,
+    required String publicApiOrigin,
+    required String? standaloneBaseUrl,
+    required bool allowDevelopmentHttp,
+  }) {
+    if (consumerMode && browserOrigin != null) {
+      if (publicApiOrigin.isNotEmpty) {
+        // Only a build-time consumer web setting may select a separate API.
+        // No development HTTP exception applies to this public origin.
+        return parseServerOrigin(publicApiOrigin);
+      }
+      return parseServerOrigin(
+        browserOrigin,
+        allowDevelopmentHttp: allowDevelopmentHttp,
+      );
+    }
+    return parseServerOrigin(
+      standaloneBaseUrl ??
+          (managedOnly
+              ? 'https://standalone.invalid'
+              : defaultStandaloneBaseUrl),
+      allowDevelopmentHttp: allowDevelopmentHttp,
+    );
+  }
 
   static String get defaultStandaloneBaseUrl {
+    if (_managedBuild) return 'https://standalone.invalid';
     if (_configuredStandalone.isNotEmpty) return _configuredStandalone;
+    if (_consumerBuild) return 'https://unconfigured.invalid';
     if (kDebugMode && allowDebugHttp) {
       return !kIsWeb && defaultTargetPlatform == TargetPlatform.android
           ? 'http://10.0.2.2:8001'
@@ -86,17 +157,31 @@ class ApiService extends ChangeNotifier {
   }
 
   bool get isAllsafe => _allsafeServer != null;
+  bool get isBrowserSession => _browserOrigin != null;
   Uri? get allsafeServer => _allsafeServer;
   bool get isSignedIn =>
-      _session != null && _session!.expiresAt.isAfter(DateTime.now());
+      _session != null &&
+      (_session!.expiresAt == null ||
+          _session!.expiresAt!.isAfter(DateTime.now()));
   Map<String, dynamic>? get currentUser =>
       isSignedIn ? Map.unmodifiable(_session!.user) : null;
 
   void useAllsafe(String server) {
+    if (consumerMode) {
+      throw const ApiException(
+        'Bu uygulama PhishCatch analiz hizmetini kullanır.',
+      );
+    }
     final validated = parseServerOrigin(
       server,
       allowDevelopmentHttp: _allowDevelopmentHttp,
     );
+    if (_browserOrigin != null &&
+        validated.origin != Uri.parse(_browserOrigin).origin) {
+      throw const ApiException(
+        'Web uygulaması kendi ALLSAFE sunucusunu kullanır. Diğer sunucunun web adresini açın.',
+      );
+    }
     _connectionGeneration++;
     _session = null;
     _allsafeServer = validated;
@@ -104,6 +189,11 @@ class ApiService extends ChangeNotifier {
   }
 
   void useStandalone() {
+    if (managedOnly) {
+      throw const ApiException(
+        'Bu sürüm ALLSAFE kurum bağlantısı için hazırlanmıştır.',
+      );
+    }
     _connectionGeneration++;
     _session = null;
     _allsafeServer = null;
@@ -121,7 +211,7 @@ class ApiService extends ChangeNotifier {
     final response = await _request(
       server,
       'POST',
-      'api/v1/auth/mobile/login',
+      isBrowserSession ? 'api/v1/auth/login' : 'api/v1/auth/mobile/login',
       body: {'email': email.trim(), 'password': password},
     );
     if (response.statusCode == 409) {
@@ -132,6 +222,14 @@ class ApiService extends ChangeNotifier {
     }
     _checkSuccess(response);
     final data = _object(response.body);
+    if (isBrowserSession) {
+      if (generation != _connectionGeneration || server != _allsafeServer) {
+        throw const ApiException('Bağlantı değişti. Yeniden giriş yapın.');
+      }
+      _session = _MobileSession(null, null, data);
+      notifyListeners();
+      return;
+    }
     final token = data['access_token'];
     final expires = data['expires_in'];
     final user = data['user'];
@@ -160,20 +258,65 @@ class ApiService extends ChangeNotifier {
     return _object(response.body);
   }
 
+  Future<void> restoreWebSession() async {
+    final server = _allsafeServer;
+    if (!isBrowserSession || server == null) return;
+    final generation = _connectionGeneration;
+    try {
+      final response = await _request(server, 'GET', 'api/v1/auth/me');
+      if (generation != _connectionGeneration || server != _allsafeServer) {
+        return;
+      }
+      if (response.statusCode == 401) return;
+      _checkSuccess(response);
+      _session = _MobileSession(null, null, _object(response.body));
+      notifyListeners();
+    } on ApiException {
+      // A failed restore remains signed out; it never selects another service.
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> scanHistory() async {
+    final response = await _authenticatedRequest(
+      'GET',
+      'api/v1/phishcatch/scans?limit=50',
+    );
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is List &&
+          decoded.every((item) => item is Map<String, dynamic>)) {
+        return decoded
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+      }
+    } on FormatException {
+      throw const ApiException('Geçmiş yanıtı okunamadı.');
+    }
+    throw const ApiException('Geçmiş yanıtı geçersiz.');
+  }
+
   Future<void> logout() async {
     final server = _allsafeServer;
     final session = _session;
-    _connectionGeneration++;
-    _session = null;
-    notifyListeners();
+    final generation = ++_connectionGeneration;
+    if (!isBrowserSession) {
+      _session = null;
+      notifyListeners();
+    }
     if (server == null || session == null) return;
     final response = await _request(
       server,
       'POST',
-      'api/v1/auth/mobile/logout',
+      isBrowserSession ? 'api/v1/auth/logout' : 'api/v1/auth/mobile/logout',
       token: session.token,
     );
     if (response.statusCode != 401) _checkSuccess(response);
+    if (isBrowserSession &&
+        generation == _connectionGeneration &&
+        identical(_session, session)) {
+      _session = null;
+      notifyListeners();
+    }
   }
 
   static String newClientRequestId() {
@@ -194,6 +337,20 @@ class ApiService extends ChangeNotifier {
   }) async {
     if (source != 'url' && source != 'qr') {
       throw const ApiException('Tarama kaynagi gecersiz.');
+    }
+    if (consumerMode) {
+      final response = await _request(
+        _standaloneServer,
+        'POST',
+        'api/v1/public/analyze',
+        body: {
+          'url': url,
+          'source': source,
+          'client_request_id': clientRequestId ?? newClientRequestId(),
+        },
+      );
+      _checkSuccess(response);
+      return AnalysisResult.fromConsumerJson(_object(response.body));
     }
     if (!isAllsafe) {
       final response = await _request(
@@ -271,6 +428,13 @@ class ApiService extends ChangeNotifier {
       request.body = jsonEncode(body);
     }
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    if (isBrowserSession &&
+        server == _allsafeServer &&
+        token == null &&
+        !{'GET', 'HEAD', 'OPTIONS'}.contains(method)) {
+      final csrf = _csrfToken();
+      if (csrf != null) request.headers['X-CSRF-Token'] = csrf;
+    }
     try {
       final streamed = await _client
           .send(request)
@@ -289,6 +453,18 @@ class ApiService extends ChangeNotifier {
 
   static void _checkSuccess(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
+    if (response.statusCode == 429) {
+      throw const ApiException(
+        'Şu anda yoğunluk var. Biraz sonra yeniden deneyin.',
+        statusCode: 429,
+      );
+    }
+    if (response.statusCode == 503 || response.statusCode == 504) {
+      throw const ApiException(
+        'Analiz tamamlanamadı. Biraz sonra yeniden deneyin.',
+        statusCode: 503,
+      );
+    }
     if (response.statusCode == 401) {
       throw const ApiException(
         'Oturum gecersiz veya suresi doldu. Yeniden giris yapin.',
@@ -296,7 +472,7 @@ class ApiService extends ChangeNotifier {
       );
     }
     throw ApiException(
-      'Sunucu istegi kabul etmedi (${response.statusCode}).',
+      'Bağlantı analiz edilemedi. Adresi kontrol edip yeniden deneyin.',
       statusCode: response.statusCode,
     );
   }

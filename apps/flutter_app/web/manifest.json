@@ -1,14 +1,20 @@
 {
-    "name": "phishcatch",
-    "short_name": "phishcatch",
+    "name": "PhishCatch",
+    "short_name": "PhishCatch",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#F7F9FC",
+    "theme_color": "#2463D4",
+    "description": "Bağlantı ve QR kod güvenlik analizi",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
+        {
+            "src": "brand.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
         {
             "src": "icons/Icon-192.png",
             "sizes": "192x192",

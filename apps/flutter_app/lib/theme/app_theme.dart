@@ -1,127 +1,146 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+/// Shared tokens keep mobile and administration screens aligned.
 class AppColors {
-  // Primary gradient colors
-  static const Color primary = Color(0xFF6C63FF);
-  static const Color primaryLight = Color(0xFF8F7CFF);
-  static const Color primaryDark = Color(0xFF302B9B);
-
-  // Accent/secondary
-  static const Color accent = Color(0xFF25D6A2);
-  static const Color accentGlow = Color(0x4025D6A2);
-  static const Color electric = Color(0xFF19D4F2);
-  static const Color magenta = Color(0xFFFF4FD8);
-
-  // Background palette
-  static const Color bgDark = Color(0xFF050817);
-  static const Color bgCard = Color(0xFF111525);
-  static const Color bgCardLight = Color(0xFF24283A);
-  static const Color bgSurface = Color(0xFF090D1D);
-
-  // Status colors
-  static const Color safe = Color(0xFF2DE38B);
-  static const Color safeGlow = Color(0x402DE38B);
-  static const Color danger = Color(0xFFFF4D6D);
-  static const Color dangerGlow = Color(0x40FF4D6D);
-  static const Color warning = Color(0xFFFFC857);
-  static const Color warningGlow = Color(0x40FFC857);
-  static const Color unknown = Color(0xFF8F94AB);
-
-  // Text
-  static const Color textPrimary = Color(0xFFF0F1F5);
-  static const Color textSecondary = Color(0xFF8F94AB);
-  static const Color textMuted = Color(0xFF5A5F7A);
-
-  // Glass
-  static const Color glassWhite = Color(0x14FFFFFF);
-  static const Color glassBorder = Color(0x26FFFFFF);
-
-  // Gradients
-  static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primary, Color(0xFF328BFF), electric],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  static const LinearGradient bgGradient = LinearGradient(
-    colors: [Color(0xFF060919), Color(0xFF080D20), bgDark],
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-  );
-
-  static const LinearGradient dangerGradient = LinearGradient(
-    colors: [danger, Color(0xFFFF6B9D)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  static const LinearGradient safeGradient = LinearGradient(
-    colors: [safe, Color(0xFF69F0AE)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+  static const primary = Color(0xFF2463D4);
+  static const primaryLight = Color(0xFF4581EA);
+  static const primaryDark = Color(0xFF194AA5);
+  static const accent = primary;
+  static const accentGlow = Color(0x192463D4);
+  static const electric = primary;
+  static const magenta = Color(0xFF7C537D);
+  static const bgDark = Color(0xFFF7F9FC);
+  static const bgCard = Colors.white;
+  static const bgCardLight = Color(0xFFEDF2FA);
+  static const bgSurface = Colors.white;
+  static const safe = Color(0xFF21734E);
+  static const safeGlow = Color(0x1921734E);
+  static const danger = Color(0xFFB23D39);
+  static const dangerGlow = Color(0x19B23D39);
+  static const warning = Color(0xFF8C6118);
+  static const warningGlow = Color(0x198C6118);
+  static const unknown = Color(0xFF626D7D);
+  static const textPrimary = Color(0xFF17243B);
+  static const textSecondary = Color(0xFF56647A);
+  static const textMuted = Color(0xFF617087);
+  static const glassWhite = Colors.white;
+  static const glassBorder = Color(0xFFDCE3EF);
+  static const primaryGradient = LinearGradient(colors: [primary, primaryDark]);
+  static const bgGradient = LinearGradient(colors: [bgDark, bgDark]);
+  static const dangerGradient = LinearGradient(colors: [danger, danger]);
+  static const safeGradient = LinearGradient(colors: [safe, safe]);
 }
 
 class AppTheme {
-  static ThemeData get darkTheme {
-    return ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: AppColors.bgDark,
-      colorScheme: const ColorScheme.dark(
-        primary: AppColors.primary,
-        secondary: AppColors.accent,
-        surface: AppColors.bgCard,
-        error: AppColors.danger,
+  static ThemeData get lightTheme => ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: AppColors.primary,
+      brightness: Brightness.light,
+      surface: AppColors.bgCard,
+      error: AppColors.danger,
+    ),
+    scaffoldBackgroundColor: AppColors.bgDark,
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: _SubtlePageTransition(),
+        TargetPlatform.iOS: _SubtlePageTransition(),
+        TargetPlatform.macOS: _SubtlePageTransition(),
+        TargetPlatform.windows: _SubtlePageTransition(),
+        TargetPlatform.linux: _SubtlePageTransition(),
+      },
+    ),
+    fontFamily: 'Arial',
+    textTheme: ThemeData.light().textTheme.apply(
+      bodyColor: AppColors.textPrimary,
+      displayColor: AppColors.textPrimary,
+      fontFamily: 'Arial',
+    ),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: AppColors.bgDark,
+      foregroundColor: AppColors.textPrimary,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      centerTitle: false,
+      titleTextStyle: TextStyle(
+        color: AppColors.textPrimary,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
       ),
-      textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme).apply(
-        bodyColor: AppColors.textPrimary,
-        displayColor: AppColors.textPrimary,
+    ),
+    dividerTheme: const DividerThemeData(color: AppColors.glassBorder),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: AppColors.bgCard,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      border: _border(),
+      enabledBorder: _border(),
+      focusedBorder: _border(AppColors.primary, 1.6),
+      errorBorder: _border(AppColors.danger),
+      hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 15),
+      labelStyle: const TextStyle(color: AppColors.textSecondary),
+    ),
+    filledButtonTheme: FilledButtonThemeData(style: _buttonStyle()),
+    elevatedButtonTheme: ElevatedButtonThemeData(style: _buttonStyle()),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.primary,
+        minimumSize: const Size(48, 52),
+        side: const BorderSide(color: AppColors.glassBorder),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       ),
-      appBarTheme: AppBarTheme(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        titleTextStyle: GoogleFonts.inter(
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-          color: AppColors.textPrimary,
-        ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: AppColors.primary,
+        minimumSize: const Size(48, 48),
       ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: AppColors.bgCardLight,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 18,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.glassBorder),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.glassBorder),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: AppColors.primary, width: 2),
-        ),
-        hintStyle: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 15),
-      ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+    ),
+    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+  );
+
+  // Compatibility with the existing app entry point.
+  static ThemeData get darkTheme => lightTheme;
+
+  static OutlineInputBorder _border([
+    Color color = AppColors.glassBorder,
+    double width = 1,
+  ]) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(12),
+    borderSide: BorderSide(color: color, width: width),
+  );
+  static ButtonStyle _buttonStyle() => FilledButton.styleFrom(
+    backgroundColor: AppColors.primary,
+    foregroundColor: Colors.white,
+    disabledBackgroundColor: AppColors.bgCardLight,
+    disabledForegroundColor: AppColors.textMuted,
+    minimumSize: const Size(48, 54),
+    elevation: 0,
+    textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  );
+}
+
+class _SubtlePageTransition extends PageTransitionsBuilder {
+  const _SubtlePageTransition();
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return FadeTransition(
+      opacity: animation.drive(CurveTween(curve: Curves.easeOut)),
+      child: child,
     );
   }
 }

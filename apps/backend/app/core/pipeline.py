@@ -429,8 +429,9 @@ class ScanningPipeline:
             status = "ok" if whois_available else "degraded"
 
         elif scanner.name == "URLhausScanner":
-            details["auth_key_required"] = False
+            details["auth_key_required"] = True
             details["auth_key_configured"] = bool(getattr(scanner, "auth_key", None))
+            status = "ok" if details["auth_key_configured"] else "degraded"
 
         elif scanner.name == "GoogleSafeBrowsing":
             api_key_configured = bool(getattr(scanner, "api_key", None))
@@ -481,14 +482,15 @@ class ScanningPipeline:
             details["model_path"] = model_path
             details["model_loaded"] = model_loaded
             details["browser_render_enabled"] = browser_render_enabled
+            details["browser_render_available"] = False
             details["browser_timeout_ms"] = getattr(scanner, "browser_timeout_ms", None)
             if browser_render_enabled:
                 playwright_available = (
                     importlib.util.find_spec("playwright") is not None
                 )
                 details["playwright_available"] = playwright_available
-                if not playwright_available:
-                    status = "degraded"
+                details["browser_isolation_required"] = True
+                status = "degraded"
             if model_path and not model_loaded:
                 status = "degraded"
 
