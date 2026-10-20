@@ -39,6 +39,9 @@ class ApiService extends ChangeNotifier {
     'ALLSAFE_API_BASE_URL',
   );
   static const _managedBuild = bool.fromEnvironment('ALLSAFE_MANAGED_MODE');
+  static const _consumerBuild = bool.fromEnvironment(
+    'PHISHCATCH_CONSUMER_MODE',
+  );
   static const _renderServer = 'https://phishcatch-p4jc.onrender.com';
   static final ApiService shared = ApiService();
 
@@ -46,6 +49,7 @@ class ApiService extends ChangeNotifier {
   final bool _ownsClient;
   final bool _allowDevelopmentHttp;
   final bool managedOnly;
+  final bool consumerMode;
   final String? _browserOrigin;
   final String? Function() _csrfToken;
   final Uri _standaloneServer;
@@ -58,23 +62,30 @@ class ApiService extends ChangeNotifier {
     String? standaloneBaseUrl,
     bool allowDevelopmentHttp = allowDebugHttp,
     this.managedOnly = _managedBuild,
+    this.consumerMode = _consumerBuild,
     String? allsafeBaseUrl,
     String? browserOrigin,
     String? Function()? csrfToken,
-  }) : _client = client ?? transport.createSessionClient(),
+  }) : _client =
+           client ??
+           (consumerMode ? http.Client() : transport.createSessionClient()),
        _ownsClient = client == null,
        _browserOrigin = browserOrigin ?? transport.browserOrigin(),
        _csrfToken = csrfToken ?? transport.readCsrfToken,
        _allowDevelopmentHttp = allowDevelopmentHttp,
        _standaloneServer = parseServerOrigin(
-         standaloneBaseUrl ??
+         (consumerMode ? (browserOrigin ?? transport.browserOrigin()) : null) ??
+             standaloneBaseUrl ??
              (managedOnly
                  ? 'https://standalone.invalid'
                  : defaultStandaloneBaseUrl),
          allowDevelopmentHttp: allowDevelopmentHttp,
        ) {
     final configured = allsafeBaseUrl ?? _configuredAllsafe;
-    if (managedOnly || configured.isNotEmpty) {
+    if (consumerMode && managedOnly) {
+      throw const ApiException('Uygulama yapılandırması geçersiz.');
+    }
+    if (!consumerMode && (managedOnly || configured.isNotEmpty)) {
       final origin = _browserOrigin ?? configured;
       _allsafeServer = parseServerOrigin(
         origin,
@@ -86,6 +97,7 @@ class ApiService extends ChangeNotifier {
   static String get defaultStandaloneBaseUrl {
     if (_managedBuild) return 'https://standalone.invalid';
     if (_configuredStandalone.isNotEmpty) return _configuredStandalone;
+    if (_consumerBuild) return 'https://unconfigured.invalid';
     if (kDebugMode && allowDebugHttp) {
       return !kIsWeb && defaultTargetPlatform == TargetPlatform.android
           ? 'http://10.0.2.2:8001'
@@ -123,6 +135,11 @@ class ApiService extends ChangeNotifier {
       isSignedIn ? Map.unmodifiable(_session!.user) : null;
 
   void useAllsafe(String server) {
+    if (consumerMode) {
+      throw const ApiException(
+        'Bu uygulama PhishCatch analiz hizmetini kullanır.',
+      );
+    }
     final validated = parseServerOrigin(
       server,
       allowDevelopmentHttp: _allowDevelopmentHttp,
@@ -289,6 +306,20 @@ class ApiService extends ChangeNotifier {
     if (source != 'url' && source != 'qr') {
       throw const ApiException('Tarama kaynagi gecersiz.');
     }
+    if (consumerMode) {
+      final response = await _request(
+        _standaloneServer,
+        'POST',
+        'api/v1/public/analyze',
+        body: {
+          'url': url,
+          'source': source,
+          'client_request_id': clientRequestId ?? newClientRequestId(),
+        },
+      );
+      _checkSuccess(response);
+      return AnalysisResult.fromConsumerJson(_object(response.body));
+    }
     if (!isAllsafe) {
       final response = await _request(
         _standaloneServer,
@@ -390,6 +421,18 @@ class ApiService extends ChangeNotifier {
 
   static void _checkSuccess(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
+    if (response.statusCode == 429) {
+      throw const ApiException(
+        'Şu anda yoğunluk var. Biraz sonra yeniden deneyin.',
+        statusCode: 429,
+      );
+    }
+    if (response.statusCode == 503 || response.statusCode == 504) {
+      throw const ApiException(
+        'Analiz tamamlanamadı. Biraz sonra yeniden deneyin.',
+        statusCode: 503,
+      );
+    }
     if (response.statusCode == 401) {
       throw const ApiException(
         'Oturum gecersiz veya suresi doldu. Yeniden giris yapin.',
@@ -397,7 +440,7 @@ class ApiService extends ChangeNotifier {
       );
     }
     throw ApiException(
-      'Sunucu istegi kabul etmedi (${response.statusCode}).',
+      'Bağlantı analiz edilemedi. Adresi kontrol edip yeniden deneyin.',
       statusCode: response.statusCode,
     );
   }

@@ -1,4 +1,5 @@
 import datetime
+import re
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
@@ -27,10 +28,25 @@ class WhoisScanner(BaseScanner):
                     details={"domain": domain, "signal": "direct_ip"},
                 )
 
+            # Whois accepts command-line options. Keep a DNS hostname as data,
+            # including before the explicit end-of-options delimiter below.
+            if len(domain) > 253 or not all(
+                re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                for label in domain.split(".")
+            ):
+                return StageResult(
+                    scanner=self.name,
+                    verdict="unknown",
+                    status="unavailable",
+                    risk_score=None,
+                    reason="WHOIS requires a valid DNS hostname",
+                    details={"signal": "invalid_hostname"},
+                )
+
             # Use subprocess to run whois command natively with timeout
             import subprocess
             try:
-                result = subprocess.run(["whois", domain], capture_output=True, text=True, timeout=3)
+                result = subprocess.run(["whois", "--", domain], capture_output=True, text=True, timeout=3)
                 creation_date = None
                 for line in result.stdout.splitlines():
                     if "Creation Date" in line or "Created On" in line:
@@ -46,6 +62,7 @@ class WhoisScanner(BaseScanner):
                 return StageResult(
                     scanner=self.name,
                     verdict="unknown",
+                    status="failed",
                     risk_score=0.0,
                     reason="WHOIS lookup timed out",
                     details={"domain": domain},
@@ -101,6 +118,7 @@ class WhoisScanner(BaseScanner):
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
+                status="failed",
                 risk_score=0.0,
                 reason="Failed to execute WHOIS lookup",
                 details={"error": str(e)},

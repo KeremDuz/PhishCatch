@@ -10,6 +10,7 @@ from app.ml.html_feature_extractor import extract_html_features_dataframe
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
 from app.services.browser_renderer import BrowserRenderResult, render_page
+from app.services.safe_http import PublicHttpResponse, public_http_request
 from app.services.url_safety import validate_public_http_url
 from app.services.url_heuristic_scanner import BRAND_TERMS, FREE_HOSTING_SUFFIXES, LEGITIMATE_BRAND_HOSTS
 from app.utils.url_utils import hostname_matches_allowed
@@ -404,16 +405,17 @@ class HtmlScraperScanner(BaseScanner):
 
             # Maksimum 1MB indir
             html_bytes = b""
-            for chunk in response.iter_content(chunk_size=1024 * 100):
-                html_bytes += chunk
-                if len(html_bytes) > 1024 * 1024:
-                    response.close()
-                    return StageResult(
-                        scanner=self.name, verdict="unknown", status="failed",
-                        reason="HTML content exceeds the analysis size limit",
-                        details={"error": "html_too_large"},
-                    )
-            response.close()
+            try:
+                for chunk in response.iter_content(chunk_size=1024 * 100):
+                    html_bytes += chunk
+                    if len(html_bytes) > 1024 * 1024:
+                        return StageResult(
+                            scanner=self.name, verdict="unknown", status="failed",
+                            reason="HTML content exceeds the analysis size limit",
+                            details={"error": "html_too_large"},
+                        )
+            finally:
+                response.close()
 
             raw_html = html_bytes.decode("utf-8", errors="ignore")
             soup = BeautifulSoup(raw_html, "lxml")
@@ -797,7 +799,7 @@ class HtmlScraperScanner(BaseScanner):
     def _endswith_any(hostname: str, suffixes: tuple[str, ...]) -> bool:
         return any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes)
 
-    def _safe_get(self, url: str, headers: dict[str, str]) -> tuple[requests.Response, str, list[dict]]:
+    def _safe_get(self, url: str, headers: dict[str, str]) -> tuple[PublicHttpResponse, str, list[dict]]:
         current_url = url
         redirect_chain = []
 
@@ -806,12 +808,10 @@ class HtmlScraperScanner(BaseScanner):
             if not safety.is_safe:
                 raise ValueError(f"URL fetch blocked: {safety.reason}")
 
-            response = requests.get(
-                current_url,
+            response = public_http_request(
+                "GET", current_url,
                 headers=headers,
                 timeout=5,
-                stream=True,
-                allow_redirects=False,
             )
 
             if not response.is_redirect:
@@ -820,7 +820,7 @@ class HtmlScraperScanner(BaseScanner):
             location = response.headers.get("Location")
             if not location:
                 return response, current_url, redirect_chain
-
+            response.close()
             next_url = urljoin(current_url, location)
             redirect_chain.append(
                 {

@@ -144,15 +144,6 @@ class _QrScannerScreenState extends State<QrScannerScreen>
                     letterSpacing: -0.5,
                   ),
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'QR kod cihazınızda okunur. Yalnızca içerdiği web bağlantısı analiz için sunucuya gönderilir.',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 14,
-                    height: 1.6,
-                  ),
-                ),
                 const SizedBox(height: 24),
                 AspectRatio(
                   aspectRatio: 1,
@@ -236,12 +227,14 @@ class _QrScannerScreenState extends State<QrScannerScreen>
                   const SizedBox(height: 16),
                   NoticeCard(message: _errorMessage!),
                 ],
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  onPressed: _startCamera,
-                  icon: const Icon(Icons.refresh, size: 20),
-                  label: const Text('Kamerayı yeniden dene'),
-                ),
+                if (_errorMessage != null) ...[
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: _startCamera,
+                    icon: const Icon(Icons.refresh, size: 20),
+                    label: const Text('Kamerayı yeniden dene'),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),

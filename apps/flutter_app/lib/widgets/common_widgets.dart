@@ -16,7 +16,7 @@ class AppBrand extends StatelessWidget {
           color: AppColors.primary,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Icon(Icons.shield_outlined, color: Colors.white, size: 25),
+        child: const Icon(Icons.link_rounded, color: Colors.white, size: 27),
       ),
       SizedBox(width: compact ? 10 : 12),
       Flexible(
@@ -34,16 +34,6 @@ class AppBrand extends StatelessWidget {
                 letterSpacing: -0.5,
               ),
             ),
-            if (!compact)
-              const Text(
-                'ALLSAFE',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: AppColors.textMuted,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2,
-                ),
-              ),
           ],
         ),
       ),

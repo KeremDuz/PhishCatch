@@ -33,7 +33,7 @@ http.Response _login() => http.Response(
 
 void main() {
   testWidgets(
-    'failed scan shows failure and unavailable scores without zero percentages',
+    'failed scan shows one clear failure without scores or implementation details',
     (tester) async {
       await tester.pumpWidget(
         _app(
@@ -44,8 +44,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Analiz tamamlanamadı'), findsOneWidget);
-      expect(find.text('Risk sinyali bulunmadı'), findsNothing);
-      expect(find.text('—'), findsNWidgets(2));
+      expect(find.text('Risk belirtisi bulunamadı'), findsNothing);
+      expect(find.text('Model olasılıkları'), findsNothing);
+      expect(find.text('Analiz adımları'), findsNothing);
+      expect(find.textContaining('%'), findsNothing);
       expect(find.text('0.0%'), findsNothing);
     },
   );
@@ -71,14 +73,16 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Riskli bağlantı'), findsOneWidget);
-      expect(find.text('Kısmi sonuç'), findsOneWidget);
-      expect(find.text('—'), findsNWidgets(2));
+      expect(find.text('Kısmi sonuç'), findsNothing);
+      expect(find.text('Model olasılıkları'), findsNothing);
+      expect(find.text('Analiz adımları'), findsNothing);
+      expect(find.textContaining('%'), findsNothing);
       expect(find.text('99.0%'), findsNothing);
     },
   );
 
   testWidgets(
-    'complete clean and unknown verdicts remain distinct and show true probabilities',
+    'clean and unknown verdicts remain distinct without exposing probabilities',
     (tester) async {
       for (final verdict in ['clean', 'unknown']) {
         await tester.pumpWidget(
@@ -99,13 +103,63 @@ void main() {
         await tester.pumpAndSettle();
         expect(
           find.text(
-            verdict == 'clean' ? 'Risk sinyali bulunmadı' : 'Belirsiz sonuç',
+            verdict == 'clean' ? 'Risk belirtisi bulunamadı' : 'Sonuç belirsiz',
           ),
           findsOneWidget,
         );
-        expect(find.text('12.3%'), findsOneWidget);
-        expect(find.text('87.7%'), findsOneWidget);
+        expect(find.text('12.3%'), findsNothing);
+        expect(find.text('87.7%'), findsNothing);
       }
+    },
+  );
+
+  testWidgets(
+    'consumer URL analysis works without login and shows only the verdict',
+    (tester) async {
+      final gate = Completer<http.Response>();
+      Map<String, dynamic>? payload;
+      final api = ApiService(
+        consumerMode: true,
+        standaloneBaseUrl: 'https://consumer.example.test',
+        client: MockClient((request) async {
+          expect(request.url.path, '/api/v1/public/analyze');
+          expect(request.headers.containsKey('authorization'), isFalse);
+          payload = jsonDecode(request.body) as Map<String, dynamic>;
+          return gate.future;
+        }),
+      );
+      addTearDown(api.dispose);
+      await tester.pumpWidget(_app(HomeScreen(api: api)));
+      expect(find.textContaining('ALLSAFE'), findsNothing);
+      expect(find.textContaining('consumer.example.test'), findsNothing);
+      expect(find.textContaining('Giriş'), findsNothing);
+      await tester.enterText(
+        find.byKey(const ValueKey('url-input')),
+        'https://example.test/url',
+      );
+      await tester.tap(find.text('Analiz et'));
+      await tester.pump();
+      expect(find.text('Analiz ediliyor…'), findsOneWidget);
+      expect(find.textContaining('%'), findsNothing);
+      gate.complete(
+        http.Response(
+          jsonEncode({
+            'contract_version': 'consumer-1',
+            'url': 'https://example.test/url',
+            'scan_status': 'partial',
+            'final_verdict': 'malicious',
+          }),
+          200,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(payload?['source'], 'url');
+      expect(payload?['client_request_id'], isNotEmpty);
+      expect(find.text('Riskli bağlantı'), findsOneWidget);
+      expect(find.text('Analiz adımları'), findsNothing);
+      expect(find.text('Model olasılıkları'), findsNothing);
+      expect(find.textContaining('%'), findsNothing);
+      expect(api.isSignedIn, isFalse);
     },
   );
 
@@ -163,7 +217,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.isSignedIn, isTrue);
     expect(find.text('Giriş yapıldı: member@example.test'), findsOneWidget);
-    expect(find.textContaining('503'), findsOneWidget);
+    expect(
+      find.text('Analiz tamamlanamadı. Biraz sonra yeniden deneyin.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('history request failure is not reported as an empty history', (
@@ -183,7 +240,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Henüz tarama kaydı yok'), findsNothing);
     expect(find.text('Yeniden dene'), findsOneWidget);
-    expect(find.textContaining('503'), findsOneWidget);
+    expect(
+      find.text('Analiz tamamlanamadı. Biraz sonra yeniden deneyin.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('history preserves partial scan status when opening the result', (
@@ -222,8 +282,8 @@ void main() {
     expect(find.text('Kısmi'), findsOneWidget);
     await tester.tap(find.text('https://example.test'));
     await tester.pumpAndSettle();
-    expect(find.text('Analiz kısmen tamamlandı'), findsOneWidget);
-    expect(find.text('Risk sinyali bulunmadı'), findsNothing);
+    expect(find.text('Sonuç belirsiz'), findsOneWidget);
+    expect(find.text('Risk belirtisi bulunamadı'), findsNothing);
   });
 
   testWidgets(
@@ -252,7 +312,7 @@ void main() {
     },
   );
 
-  testWidgets('QR home action submits URL with qr source to ALLSAFE', (
+  testWidgets('QR consumer action submits anonymously with qr source', (
     tester,
   ) async {
     final original = MobileScannerPlatform.instance;
@@ -263,37 +323,25 @@ void main() {
       camera.barcodes.close();
     });
     Map<String, dynamic>? payload;
-    final api = _api(
-      MockClient((request) async {
-        if (request.url.path.endsWith('/login')) return _login();
-        expect(request.url.path, '/api/v1/phishcatch/scans');
+    final api = ApiService(
+      consumerMode: true,
+      standaloneBaseUrl: 'https://consumer.example.test',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/v1/public/analyze');
+        expect(request.headers.containsKey('authorization'), isFalse);
         payload = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response(
           jsonEncode({
-            'id': 'qr-scan-test',
+            'contract_version': 'consumer-1',
             'scan_status': 'complete',
-            'analysis': {
-              'contract_version': '2',
-              'scan_status': 'complete',
-              'url': 'https://example.test/qr',
-              'normalized_url': 'https://example.test/qr',
-              'final_verdict': 'clean',
-              'stages': [
-                {
-                  'scanner': 'url_model',
-                  'verdict': 'clean',
-                  'status': 'completed',
-                },
-              ],
-            },
+            'url': 'https://example.test/qr',
+            'final_verdict': 'clean',
           }),
           201,
         );
       }),
     );
     addTearDown(api.dispose);
-    api.useAllsafe('https://allsafe.example.test');
-    await api.login(email: 'member@example.test', password: 'test');
     await tester.pumpWidget(_app(HomeScreen(api: api)));
     await tester.ensureVisible(find.text('QR kod tara'));
     await tester.tap(find.text('QR kod tara'));
@@ -307,8 +355,9 @@ void main() {
     expect(payload?['url'], 'https://example.test/qr');
     expect(payload?['source'], 'qr');
     expect(payload?['client_request_id'], isNotEmpty);
-    expect(find.text('Risk sinyali bulunmadı'), findsOneWidget);
-    expect(find.text('qr-scan-test'), findsOneWidget);
+    expect(find.text('Risk belirtisi bulunamadı'), findsOneWidget);
+    expect(find.text('qr-scan-test'), findsNothing);
+    expect(find.textContaining('ALLSAFE'), findsNothing);
     expect(camera.disposed, isTrue);
   });
 

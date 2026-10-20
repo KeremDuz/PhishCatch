@@ -6,6 +6,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'screens/admin_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/standalone_tools_screen.dart';
 import 'theme/app_theme.dart';
 import 'services/allsafe_api_service.dart';
 
@@ -23,7 +24,9 @@ void main() {
   );
 
   runApp(const PhishCatchApp());
-  unawaited(ApiService.shared.restoreWebSession());
+  if (!ApiService.shared.consumerMode) {
+    unawaited(ApiService.shared.restoreWebSession());
+  }
 }
 
 class PhishCatchApp extends StatelessWidget {
@@ -32,13 +35,18 @@ class PhishCatchApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ALLSAFE · PhishCatch',
+      title: ApiService.shared.consumerMode
+          ? 'PhishCatch'
+          : 'ALLSAFE · PhishCatch',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       initialRoute: _initialRoute(),
       routes: {
         '/': (_) => const HomeScreen(),
-        '/admin': (_) => const AdminScreen(),
+        if (!ApiService.shared.consumerMode)
+          '/admin': (_) => const AdminScreen(),
+        if (!ApiService.shared.consumerMode)
+          '/tools': (_) => const StandaloneToolsScreen(),
       },
       onUnknownRoute: (_) =>
           MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -46,6 +54,7 @@ class PhishCatchApp extends StatelessWidget {
   }
 
   String _initialRoute() {
+    if (ApiService.shared.consumerMode) return '/';
     final uri = Uri.base;
     final path = uri.path.toLowerCase();
     final fragment = uri.fragment.toLowerCase();

@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phishcatch/screens/home_screen.dart';
+import 'package:phishcatch/screens/standalone_tools_screen.dart';
 import 'package:phishcatch/screens/batch_result_screen.dart';
 import 'package:phishcatch/services/allsafe_api_service.dart';
 import 'package:phishcatch/services/api_service.dart';
@@ -12,7 +13,7 @@ import 'package:phishcatch/theme/app_theme.dart';
 
 void main() {
   testWidgets(
-    'standalone exposes batch analysis and its separate administration route',
+    'legacy tools retain batch analysis and a separate administration route',
     (tester) async {
       final api = ApiService(
         standaloneBaseUrl: 'https://standalone.example.test',
@@ -21,7 +22,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
-          home: HomeScreen(api: api),
+          home: StandaloneToolsScreen(api: api),
           routes: {
             '/admin': (_) =>
                 const Scaffold(body: Text('Standalone admin route')),
@@ -50,7 +51,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             theme: AppTheme.lightTheme,
-            home: HomeScreen(api: api),
+            home: StandaloneToolsScreen(api: api),
           ),
         );
         expect(find.text('Toplu URL analizi'), findsNothing);
@@ -80,7 +81,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
-          home: HomeScreen(
+          home: StandaloneToolsScreen(
             api: api,
             filePicker: picker,
             analyzeUrlFile: ({required bytes, required filename}) async {
@@ -127,7 +128,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
-          home: HomeScreen(
+          home: StandaloneToolsScreen(
             api: api,
             filePicker: _Picker(() async => null),
             analyzeUrlFile: ({required bytes, required filename}) async =>
@@ -159,7 +160,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.lightTheme,
-        home: HomeScreen(
+        home: StandaloneToolsScreen(
           api: api,
           filePicker: _Picker(
             () async => FilePickerResult([
@@ -190,7 +191,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.lightTheme,
-        home: HomeScreen(
+        home: StandaloneToolsScreen(
           api: api,
           filePicker: _Picker(() => selection.future),
           analyzeUrlFile: ({required bytes, required filename}) async {
@@ -235,10 +236,13 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('PhishCatch'), findsOneWidget);
-      expect(find.text('Bağlantıyı analiz et'), findsOneWidget);
+      expect(find.text('Analiz et'), findsOneWidget);
       expect(find.text('QR kod tara'), findsOneWidget);
-      expect(find.text('Giriş gerekli'), findsOneWidget);
-      expect(find.byTooltip('Tarama geçmişi'), findsOneWidget);
+      expect(find.text('Giriş gerekli'), findsNothing);
+      expect(find.byTooltip('Tarama geçmişi'), findsNothing);
+      expect(find.text('ALLSAFE'), findsNothing);
+      expect(find.text('allsafe.example.test'), findsNothing);
+      expect(find.byTooltip('Bağlantı ve hesap'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }
@@ -268,8 +272,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Bağlantıyı analiz et'));
-    await tester.tap(find.text('Bağlantıyı analiz et'));
+    await tester.ensureVisible(find.text('Analiz et'));
+    await tester.tap(find.text('Analiz et'));
     await tester.pumpAndSettle();
     expect(
       find.text('Kontrol etmek istediğiniz bağlantıyı girin.'),
