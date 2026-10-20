@@ -38,6 +38,9 @@ class ApiService extends ChangeNotifier {
   static const _configuredAllsafe = String.fromEnvironment(
     'ALLSAFE_API_BASE_URL',
   );
+  static const _configuredPublicApiOrigin = String.fromEnvironment(
+    'PHISHCATCH_PUBLIC_API_ORIGIN',
+  );
   static const _managedBuild = bool.fromEnvironment('ALLSAFE_MANAGED_MODE');
   static const _consumerBuild = bool.fromEnvironment(
     'PHISHCATCH_CONSUMER_MODE',
@@ -65,6 +68,7 @@ class ApiService extends ChangeNotifier {
     this.consumerMode = _consumerBuild,
     String? allsafeBaseUrl,
     String? browserOrigin,
+    String publicApiOrigin = _configuredPublicApiOrigin,
     String? Function()? csrfToken,
   }) : _client =
            client ??
@@ -73,12 +77,12 @@ class ApiService extends ChangeNotifier {
        _browserOrigin = browserOrigin ?? transport.browserOrigin(),
        _csrfToken = csrfToken ?? transport.readCsrfToken,
        _allowDevelopmentHttp = allowDevelopmentHttp,
-       _standaloneServer = parseServerOrigin(
-         (consumerMode ? (browserOrigin ?? transport.browserOrigin()) : null) ??
-             standaloneBaseUrl ??
-             (managedOnly
-                 ? 'https://standalone.invalid'
-                 : defaultStandaloneBaseUrl),
+       _standaloneServer = _standaloneOrigin(
+         consumerMode: consumerMode,
+         managedOnly: managedOnly,
+         browserOrigin: browserOrigin ?? transport.browserOrigin(),
+         publicApiOrigin: publicApiOrigin,
+         standaloneBaseUrl: standaloneBaseUrl,
          allowDevelopmentHttp: allowDevelopmentHttp,
        ) {
     final configured = allsafeBaseUrl ?? _configuredAllsafe;
@@ -92,6 +96,34 @@ class ApiService extends ChangeNotifier {
         allowDevelopmentHttp: allowDevelopmentHttp,
       );
     }
+  }
+
+  static Uri _standaloneOrigin({
+    required bool consumerMode,
+    required bool managedOnly,
+    required String? browserOrigin,
+    required String publicApiOrigin,
+    required String? standaloneBaseUrl,
+    required bool allowDevelopmentHttp,
+  }) {
+    if (consumerMode && browserOrigin != null) {
+      if (publicApiOrigin.isNotEmpty) {
+        // Only a build-time consumer web setting may select a separate API.
+        // No development HTTP exception applies to this public origin.
+        return parseServerOrigin(publicApiOrigin);
+      }
+      return parseServerOrigin(
+        browserOrigin,
+        allowDevelopmentHttp: allowDevelopmentHttp,
+      );
+    }
+    return parseServerOrigin(
+      standaloneBaseUrl ??
+          (managedOnly
+              ? 'https://standalone.invalid'
+              : defaultStandaloneBaseUrl),
+      allowDevelopmentHttp: allowDevelopmentHttp,
+    );
   }
 
   static String get defaultStandaloneBaseUrl {
