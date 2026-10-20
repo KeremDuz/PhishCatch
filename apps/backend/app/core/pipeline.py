@@ -429,8 +429,9 @@ class ScanningPipeline:
             status = "ok" if whois_available else "degraded"
 
         elif scanner.name == "URLhausScanner":
-            details["auth_key_required"] = False
+            details["auth_key_required"] = True
             details["auth_key_configured"] = bool(getattr(scanner, "auth_key", None))
+            status = "ok" if details["auth_key_configured"] else "degraded"
 
         elif scanner.name == "GoogleSafeBrowsing":
             api_key_configured = bool(getattr(scanner, "api_key", None))

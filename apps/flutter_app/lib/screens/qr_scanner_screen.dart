@@ -1,7 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:flutter/foundation.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../theme/app_theme.dart';
@@ -9,326 +8,288 @@ import '../widgets/common_widgets.dart';
 
 class QrScannerScreen extends StatefulWidget {
   const QrScannerScreen({super.key});
-
   @override
   State<QrScannerScreen> createState() => _QrScannerScreenState();
 }
 
-class _QrScannerScreenState extends State<QrScannerScreen> {
+class _QrScannerScreenState extends State<QrScannerScreen>
+    with WidgetsBindingObserver {
   late final MobileScannerController _controller;
   bool _hasResult = false;
+  bool _foreground = true;
+  Future<void> _cameraOperation = Future<void>.value();
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = MobileScannerController(
-      facing: kIsWeb ? CameraFacing.front : CameraFacing.back,
+      autoStart: false,
+      facing: CameraFacing.back,
       formats: const [BarcodeFormat.qrCode],
-      detectionSpeed: DetectionSpeed.normal,
+      detectionSpeed: DetectionSpeed.noDuplicates,
     );
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_startCamera()),
+    );
+  }
+
+  Future<void> _startCamera() {
+    // Serialize lifecycle changes, permission prompts, retry and result closure.
+    // A late start must never leave the camera active in the background.
+    _cameraOperation = _cameraOperation.then((_) async {
+      if (!mounted || _hasResult || !_foreground) {
+        await _stopCamera();
+        return;
+      }
+      try {
+        await _controller.start();
+        if (!mounted || !_foreground || _hasResult) await _stopCamera();
+        if (mounted) {
+          setState(
+            () => _errorMessage = _controller.value.error == null
+                ? null
+                : _cameraErrorText(_controller.value.error!),
+          );
+        }
+      } on MobileScannerException catch (error) {
+        if (mounted) setState(() => _errorMessage = _cameraErrorText(error));
+      } catch (_) {
+        if (mounted) {
+          setState(
+            () => _errorMessage =
+                'Kamera başlatılamadı. İzinleri kontrol edip yeniden deneyin.',
+          );
+        }
+      }
+    });
+    return _cameraOperation;
+  }
+
+  Future<void> _stopCamera() async {
+    try {
+      await _controller.stop();
+    } on MobileScannerException {
+      /* The camera may already be stopped by the platform. */
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    unawaited(_startCamera());
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _hasResult = true;
+    unawaited(_cameraOperation.whenComplete(() => _controller.dispose()));
     super.dispose();
   }
 
   Future<void> _handleDetect(BarcodeCapture capture) async {
-    if (_hasResult) return;
-
+    if (_hasResult || !_foreground) return;
     String? value;
-    for (final barcode in capture.barcodes) {
-      final rawValue = barcode.rawValue?.trim();
-      if (rawValue != null && rawValue.isNotEmpty) {
-        value = rawValue;
+    for (final code in capture.barcodes) {
+      final raw = code.rawValue?.trim();
+      if (raw != null && raw.isNotEmpty) {
+        value = raw;
         break;
       }
     }
-
     if (value == null) return;
-
+    final uri = Uri.tryParse(value.contains('://') ? value : 'https://$value');
+    if (uri == null ||
+        !['http', 'https'].contains(uri.scheme.toLowerCase()) ||
+        uri.host.isEmpty ||
+        !uri.host.contains('.') ||
+        RegExp(r'\s').hasMatch(value)) {
+      setState(
+        () => _errorMessage =
+            'Bu QR kod bir web bağlantısı içermiyor. Başka bir kod okutun.',
+      );
+      return;
+    }
     _hasResult = true;
-    await _controller.stop();
-    if (!mounted) return;
-    Navigator.of(context).pop(value);
-  }
-
-  void _handleDetectError(Object error, StackTrace stackTrace) {
-    if (!mounted) return;
-    setState(() {
-      _errorMessage = 'QR kod okunamadi. Kamerayi koda dogru tut.';
-    });
+    await _startCamera();
+    if (mounted) Navigator.of(context).pop(value);
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bgDark,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.bgSurface.withValues(alpha: 0.72),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.glassBorder),
-            ),
-            child: const Icon(Icons.close_rounded, size: 20),
-          ),
-        ),
-        title: Text(
-          'QR Tara',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-        ),
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('QR kod tara'),
+      leading: IconButton(
+        tooltip: 'Kapat',
+        onPressed: () => Navigator.of(context).pop(),
+        icon: const Icon(Icons.close),
       ),
-      body: CyberBackdrop(
-        dense: MediaQuery.of(context).size.width < 720,
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 720;
-              return Center(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 48 : 24,
-                    80,
-                    isWide ? 48 : 24,
-                    32,
+    ),
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Kodu çerçeveye yerleştirin',
+                  style: TextStyle(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.5,
                   ),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'QR kod cihazınızda okunur. Yalnızca içerdiği web bağlantısı analiz için sunucuya gönderilir.',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 14,
+                    height: 1.6,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        _buildScannerFrame(isWide),
-                        const SizedBox(height: 18),
-                        _buildScannerHint(),
-                        if (_errorMessage != null) ...[
-                          const SizedBox(height: 14),
-                          _buildErrorMessage(),
-                        ],
+                        MobileScanner(
+                          controller: _controller,
+                          fit: BoxFit.cover,
+                          onDetect: _handleDetect,
+                          onDetectError: (_, _) {
+                            if (mounted) {
+                              setState(
+                                () => _errorMessage =
+                                    'QR kod okunamadı. Kodu aydınlık bir ortamda sabit tutun.',
+                              );
+                            }
+                          },
+                          errorBuilder: (_, error) => _cameraError(error),
+                          placeholderBuilder: (_) => const ColoredBox(
+                            color: AppColors.bgCardLight,
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                          overlayBuilder: (_, _) => IgnorePointer(
+                            child: Padding(
+                              padding: const EdgeInsets.all(36),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: ValueListenableBuilder<MobileScannerState>(
+                            valueListenable: _controller,
+                            builder: (context, state, _) => IconButton.filled(
+                              tooltip: 'Kamera değiştir',
+                              onPressed:
+                                  state.isInitialized &&
+                                      state.hasCameraPermission &&
+                                      (state.availableCameras ?? 2) > 1
+                                  ? () async {
+                                      try {
+                                        await _controller.switchCamera();
+                                      } on MobileScannerException {
+                                        if (mounted) {
+                                          setState(
+                                            () => _errorMessage =
+                                                'Diğer kamera açılamadı.',
+                                          );
+                                        }
+                                      }
+                                    }
+                                  : null,
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.black.withValues(
+                                  alpha: 0.65,
+                                ),
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.cameraswitch_outlined),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildScannerFrame(bool isWide) {
-    final size = isWide ? 380.0 : 310.0;
-    return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: AppColors.bgCard.withValues(alpha: 0.82),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.36),
-                blurRadius: 34,
-                offset: const Offset(0, 18),
-              ),
-              BoxShadow(
-                color: AppColors.electric.withValues(alpha: 0.14),
-                blurRadius: 34,
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              MobileScanner(
-                controller: _controller,
-                fit: BoxFit.cover,
-                onDetect: _handleDetect,
-                onDetectError: _handleDetectError,
-                errorBuilder: (context, error) => _buildCameraError(error),
-                placeholderBuilder: (context) => _buildCameraPlaceholder(),
-              ),
-              _buildScannerOverlay(),
-              _buildScannerActions(),
-            ],
-          ),
-        )
-        .animate()
-        .fadeIn(duration: 260.ms)
-        .scale(
-          begin: const Offset(0.96, 0.96),
-          duration: 340.ms,
-          curve: Curves.easeOutCubic,
-        );
-  }
-
-  Widget _buildScannerOverlay() {
-    return IgnorePointer(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: AppColors.electric.withValues(alpha: 0.72),
-              width: 2,
-            ),
-          ),
-          child: Center(
-            child: Container(
-              height: 2,
-              margin: const EdgeInsets.symmetric(horizontal: 18),
-              decoration: BoxDecoration(
-                color: AppColors.electric.withValues(alpha: 0.78),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.electric.withValues(alpha: 0.44),
-                    blurRadius: 18,
-                  ),
+                if (_errorMessage != null &&
+                    _controller.value.error == null) ...[
+                  const SizedBox(height: 16),
+                  NoticeCard(message: _errorMessage!),
                 ],
-              ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: _startCamera,
+                  icon: const Icon(Icons.refresh, size: 20),
+                  label: const Text('Kamerayı yeniden dene'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Bağlantıyı elle gir'),
+                ),
+              ],
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _buildScannerActions() {
-    return Positioned(
-      right: 14,
-      top: 14,
-      child: ValueListenableBuilder<MobileScannerState>(
-        valueListenable: _controller,
-        builder: (context, state, child) {
-          final canSwitch =
-              state.isInitialized &&
-              state.hasCameraPermission &&
-              (state.availableCameras == null || state.availableCameras! > 1);
-          return IconButton(
-            tooltip: 'Kamera degistir',
-            onPressed: canSwitch ? () => _controller.switchCamera() : null,
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.black.withValues(alpha: 0.52),
-              foregroundColor: Colors.white,
-              disabledForegroundColor: Colors.white.withValues(alpha: 0.34),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            icon: const Icon(Icons.cameraswitch_rounded, size: 20),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildScannerHint() {
-    return Text(
-      'QR kodu kameranin ortasina getir.',
-      textAlign: TextAlign.center,
-      style: GoogleFonts.inter(
-        color: AppColors.textSecondary,
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        height: 1.45,
-      ),
-    );
-  }
-
-  Widget _buildCameraPlaceholder() {
-    return Container(
-      color: AppColors.bgSurface,
+  String _cameraErrorText(MobileScannerException error) =>
+      error.errorCode == MobileScannerErrorCode.permissionDenied
+      ? 'Kamera izni verilmedi. Cihaz veya tarayıcı ayarlarından kamera iznini açın, ardından yeniden deneyin.'
+      : 'Kamera açılamadı. Kameranın başka bir uygulamada kullanılmadığını kontrol edin.';
+  Widget _cameraError(MobileScannerException error) => ColoredBox(
+    color: AppColors.bgCardLight,
+    child: Padding(
+      padding: const EdgeInsets.all(28),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.4,
-                color: AppColors.electric.withValues(alpha: 0.86),
-              ),
+            const Icon(
+              Icons.videocam_off_outlined,
+              color: AppColors.textMuted,
+              size: 40,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            const Text(
+              'Kamera kullanılamıyor',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
             Text(
-              'Kamera baslatiliyor...',
-              style: GoogleFonts.inter(
+              _cameraErrorText(error),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 13,
-                fontWeight: FontWeight.w700,
+                height: 1.6,
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildCameraError(MobileScannerException error) {
-    return Container(
-      color: AppColors.bgSurface,
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.videocam_off_rounded, color: AppColors.danger, size: 42),
-          const SizedBox(height: 14),
-          Text(
-            'Kamera acilamadi',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              color: AppColors.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Kamera iznini kontrol edip tekrar dene.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              color: AppColors.textSecondary,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorMessage() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.danger.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.danger.withValues(alpha: 0.28)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline_rounded, color: AppColors.danger, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              _errorMessage!,
-              style: GoogleFonts.inter(color: AppColors.danger, fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }

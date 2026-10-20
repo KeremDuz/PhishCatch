@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -18,30 +18,37 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="PhishCatch URL phishing analysis">
+  <meta name="description" content="ALLSAFE PhishCatch bağlantı ve QR kod güvenlik analizi">
+  <meta name="theme-color" content="#16856B">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="PhishCatch">
+  <meta name="apple-mobile-web-app-title" content="ALLSAFE PhishCatch">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/svg+xml" href="brand.svg"/>
 
-  <title>PhishCatch</title>
+  <title>ALLSAFE · PhishCatch</title>
   <link rel="manifest" href="manifest.json">
   <script>
     (async function () {
       try {
         if ('serviceWorker' in navigator) {
           const registrations = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(registrations.map((registration) => registration.unregister()));
+          const oldFlutterWorker = new URL('flutter_service_worker.js', document.baseURI).href;
+          await Promise.all(registrations.filter((registration) =>
+            [registration.active, registration.waiting, registration.installing]
+              .some((worker) => worker && worker.scriptURL === oldFlutterWorker)
+          ).map((registration) => registration.unregister()));
         }
 
         if ('caches' in window) {
           const cacheNames = await caches.keys();
-          await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+          await Promise.all(cacheNames.filter((cacheName) =>
+            ['flutter-app-cache', 'flutter-temp-cache', 'flutter-app-manifest'].includes(cacheName)
+          ).map((cacheName) => caches.delete(cacheName)));
         }
       } catch (error) {
         console.warn('Failed to clear old Flutter web cache:', error);

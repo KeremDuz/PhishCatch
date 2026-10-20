@@ -1,508 +1,577 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/allsafe_api_service.dart';
+import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import 'batch_result_screen.dart';
+import 'connection_screen.dart';
+import 'history_screen.dart';
 import 'qr_scanner_screen.dart';
 import 'result_screen.dart';
-import 'connection_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
+  final ApiService? api;
+  final FilePicker? filePicker;
+  final Future<BatchAnalysisResult> Function({
+    required Uint8List bytes,
+    required String filename,
+  })?
+  analyzeUrlFile;
+  const HomeScreen({super.key, this.api, this.filePicker, this.analyzeUrlFile});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _urlController = TextEditingController();
-  final FocusNode _urlFocusNode = FocusNode();
+  final _urlController = TextEditingController();
+  final _urlFocusNode = FocusNode();
   bool _isLoading = false;
+  bool _isBatchLoading = false;
   String? _errorMessage;
   String? _pendingRequestId;
   String? _pendingRequestUrl;
   String? _pendingRequestSource;
   String _inputSource = 'url';
-
-  @override
-  void initState() {
-    super.initState();
-    _urlFocusNode.addListener(_handleFocusChanged);
-  }
+  ApiService get _api => widget.api ?? ApiService.shared;
+  bool get _canUseStandalone => !_api.isAllsafe && !_api.managedOnly;
+  static const _maxBatchBytes = 512 * 1024;
 
   @override
   void dispose() {
-    _urlFocusNode.removeListener(_handleFocusChanged);
     _urlController.dispose();
     _urlFocusNode.dispose();
     super.dispose();
   }
 
-  void _handleFocusChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+  Future<void> _openConnection() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => ConnectionScreen(api: _api)),
+    );
   }
 
-  Future<void> _analyzeUrl(String url, {String? source}) async {
+  Future<void> _analyzeUrl(String input, {String? source}) async {
+    final url = input.trim();
     final scanSource = source ?? _inputSource;
-    if (url.trim().isEmpty) {
-      setState(() => _errorMessage = 'Lutfen bir baglanti gir.');
+    if (url.isEmpty) {
+      setState(
+        () => _errorMessage = 'Kontrol etmek istediğiniz bağlantıyı girin.',
+      );
+      _urlFocusNode.requestFocus();
       return;
     }
-
+    if (_api.isAllsafe && !_api.isSignedIn) {
+      await _openConnection();
+      return;
+    }
+    FocusScope.of(context).unfocus();
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
-
     try {
-      if (_pendingRequestUrl != url.trim() ||
-          _pendingRequestSource != scanSource) {
+      if (_pendingRequestUrl != url || _pendingRequestSource != scanSource) {
         _pendingRequestId = ApiService.newClientRequestId();
-        _pendingRequestUrl = url.trim();
+        _pendingRequestUrl = url;
         _pendingRequestSource = scanSource;
       }
-      final requestId = _pendingRequestId ??= ApiService.newClientRequestId();
-      final result = await ApiService.shared.analyzeUrl(
-        url.trim(),
+      final result = await _api.analyzeUrl(
+        url,
         source: scanSource,
-        clientRequestId: requestId,
+        clientRequestId: _pendingRequestId ??= ApiService.newClientRequestId(),
       );
-      _pendingRequestId = null;
-      _pendingRequestUrl = null;
-      _pendingRequestSource = null;
+      _pendingRequestId = _pendingRequestUrl = _pendingRequestSource = null;
       if (!mounted) return;
       setState(() => _isLoading = false);
-      Navigator.of(context).push(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              ResultScreen(result: result),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position:
-                    Tween<Offset>(
-                      begin: const Offset(0, 0.04),
-                      end: Offset.zero,
-                    ).animate(
-                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                    ),
-                child: child,
-              ),
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 280),
-        ),
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => ResultScreen(result: result)),
       );
-    } catch (e) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = e is ApiException
-            ? e.message
-            : 'Analiz sonucu okunamadi.';
+        _errorMessage = error is ApiException
+            ? error.message
+            : 'Analiz tamamlanamadı. Bağlantınızı kontrol edip yeniden deneyin.';
       });
     }
   }
 
   Future<void> _openQrScanner() async {
     if (_isLoading) return;
-
-    final scannedValue = await Navigator.of(context).push<String>(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const QrScannerScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(0, 0.04),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                  ),
-              child: child,
-            ),
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 240),
-      ),
-    );
-
-    if (!mounted || scannedValue == null) return;
-    _urlController.text = scannedValue;
+    if (_api.isAllsafe && !_api.isSignedIn) {
+      await _openConnection();
+      return;
+    }
+    final value = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const QrScannerScreen()));
+    if (!mounted || value == null) return;
+    _urlController.text = value;
     _inputSource = 'qr';
-    await _analyzeUrl(scannedValue, source: 'qr');
+    await _analyzeUrl(value, source: 'qr');
+  }
+
+  Future<void> _pickAndAnalyzeFile() async {
+    if (_isLoading || !_canUseStandalone) return;
+    setState(() {
+      _isLoading = _isBatchLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      final picked = await (widget.filePicker ?? FilePicker.platform).pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['txt', 'csv'],
+        allowMultiple: false,
+        withData: false,
+        withReadStream: true,
+      );
+      if (!mounted ||
+          !_canUseStandalone ||
+          picked == null ||
+          picked.files.isEmpty) {
+        return;
+      }
+      final file = picked.files.single;
+      if (!const ['txt', 'csv'].contains(file.extension?.toLowerCase())) {
+        throw const ApiException(
+          'TXT veya CSV biçiminde bir URL listesi seçin.',
+        );
+      }
+      if (file.size > _maxBatchBytes) {
+        throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+      }
+      final content = BytesBuilder(copy: false);
+      if (file.bytes != null) {
+        if (file.bytes!.length > _maxBatchBytes) {
+          throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+        }
+        content.add(file.bytes!);
+      } else if (file.readStream != null) {
+        await for (final chunk in file.readStream!) {
+          if (!mounted || !_canUseStandalone) return;
+          if (content.length + chunk.length > _maxBatchBytes) {
+            throw const ApiException('Dosya en fazla 512 KB olmalıdır.');
+          }
+          content.add(chunk);
+        }
+      } else {
+        throw const ApiException('Dosya okunamadı. Başka bir dosya seçin.');
+      }
+      if (content.isEmpty) throw const ApiException('Seçilen dosya boş.');
+      if (!mounted || !_canUseStandalone) return;
+      final analyze =
+          widget.analyzeUrlFile ?? PhishCatchApiService.analyzeUrlFile;
+      final result = await analyze(
+        bytes: content.takeBytes(),
+        filename: file.name,
+      );
+      if (!mounted || !_canUseStandalone) return;
+      setState(() => _isLoading = _isBatchLoading = false);
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => BatchResultScreen(result: result),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _errorMessage = error is ApiException
+              ? error.message
+              : 'Toplu analiz tamamlanamadı. Dosyayı ve sunucu bağlantısını kontrol edin.',
+        );
+      }
+    } finally {
+      if (mounted && _isBatchLoading) {
+        setState(() => _isLoading = _isBatchLoading = false);
+      }
+    }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bgDark,
-      body: CyberBackdrop(
-        dense: MediaQuery.of(context).size.width < 720,
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 720;
-              return Center(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isWide ? 48 : 24,
-                    vertical: isWide ? 32 : 24,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 600),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildIdentity(isWide),
-                        const SizedBox(height: 12),
-                        AnimatedBuilder(
-                          animation: ApiService.shared,
-                          builder: (context, _) => TextButton.icon(
-                            onPressed: _isLoading
-                                ? null
-                                : () => Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => ConnectionScreen(
-                                        api: ApiService.shared,
-                                      ),
-                                    ),
-                                  ),
-                            icon: const Icon(Icons.settings_rounded, size: 18),
-                            label: Text(
-                              ApiService.shared.isAllsafe
-                                  ? ApiService.shared.isSignedIn
-                                        ? 'ALLSAFE: giris yapildi'
-                                        : 'ALLSAFE: giris gerekli'
-                                  : 'Baglanti: bagimsiz PhishCatch',
-                            ),
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: AnimatedBuilder(
+        animation: _api,
+        builder: (context, _) => LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 900;
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: wide ? 48 : 20,
+                  vertical: wide ? 32 : 20,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1120),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _header(wide),
+                      SizedBox(height: wide ? 72 : 40),
+                      if (wide)
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(flex: 5, child: _introduction(wide)),
+                            const SizedBox(width: 64),
+                            Expanded(flex: 6, child: _workspace(wide)),
+                          ],
+                        )
+                      else ...[
+                        _introduction(wide),
+                        const SizedBox(height: 28),
+                        _workspace(wide),
+                      ],
+                      SizedBox(height: wide ? 64 : 36),
+                      const Divider(height: 1),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 20),
+                        child: Text(
+                          'Analiz sonucu bir tahmindir. Eksik kontroller, bağlantının temiz olduğu anlamına gelmez.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12,
+                            height: 1.6,
                           ),
                         ),
-                        SizedBox(height: isWide ? 48 : 34),
-                        _buildCommandSurface(isWide),
-                        if (_errorMessage != null) ...[
-                          const SizedBox(height: 16),
-                          _buildErrorMessage(),
-                        ],
-                        SizedBox(height: isWide ? 52 : 42),
-                        _buildFooter(),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
+              ),
+            );
+          },
+        ),
+      ),
+    ),
+  );
+
+  Widget _header(bool wide) => Row(
+    children: [
+      Expanded(
+        child: AppBrand(compact: MediaQuery.sizeOf(context).width < 380),
+      ),
+      if (wide) ...[
+        StatusBadge(label: _api.isAllsafe ? 'Kurum modu' : 'Bağımsız mod'),
+        const SizedBox(width: 16),
+      ],
+      if (_api.isAllsafe)
+        IconButton(
+          onPressed: _isLoading
+              ? null
+              : () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => HistoryScreen(api: _api),
+                  ),
+                ),
+          tooltip: 'Tarama geçmişi',
+          icon: const Icon(
+            Icons.history_outlined,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      IconButton(
+        onPressed: _isLoading ? null : _openConnection,
+        tooltip: 'Bağlantı ve hesap',
+        icon: const Icon(
+          Icons.settings_outlined,
+          color: AppColors.textSecondary,
+        ),
+      ),
+    ],
+  );
+
+  Widget _introduction(bool wide) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'BAĞLANTI GÜVENLİĞİ',
+        style: TextStyle(
+          color: AppColors.primary,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.6,
+        ),
+      ),
+      const SizedBox(height: 16),
+      Text(
+        'Açmadan önce\nkontrol edin.',
+        style: TextStyle(
+          fontSize: wide ? 46 : 34,
+          height: 1.15,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -1.4,
+        ),
+      ),
+      const SizedBox(height: 20),
+      const Text(
+        'Bir bağlantı yapıştırın veya QR kod okutun. PhishCatch, olası oltalama işaretlerini sunucuda analiz eder.',
+        style: TextStyle(
+          color: AppColors.textSecondary,
+          fontSize: 16,
+          height: 1.7,
+        ),
+      ),
+      if (wide) ...[
+        const SizedBox(height: 36),
+        _step('01', 'Bağlantıyı paylaşın', 'URL ya da QR kod ile başlayın.'),
+        const SizedBox(height: 20),
+        _step(
+          '02',
+          'Sonucu inceleyin',
+          'Tahmini ve tamamlanan kontrolleri görün.',
+        ),
+      ],
+    ],
+  );
+
+  Widget _step(String number, String title, String description) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          number,
+          style: const TextStyle(
+            color: AppColors.primary,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildIdentity(bool isWide) {
-    return Column(
+      const SizedBox(width: 14),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLogo(isWide),
-            const SizedBox(height: 20),
-            GradientText(
-              text: 'PhishCatch',
-              style: GoogleFonts.inter(
-                fontSize: isWide ? 38 : 34,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-                height: 1,
-              ),
-            ),
-            const SizedBox(height: 16),
             Text(
-              'Protect yourself from phishing attacks.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                color: AppColors.textSecondary,
-                fontSize: isWide ? 16 : 14,
-                fontWeight: FontWeight.w500,
-                height: 1.45,
-              ),
+              title,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
-              'Paste a URL or scan a QR code to analyze.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
+              description,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.5,
                 color: AppColors.textSecondary,
-                fontSize: isWide ? 16 : 14,
-                fontWeight: FontWeight.w500,
-                height: 1.45,
               ),
             ),
           ],
-        )
-        .animate()
-        .fadeIn(duration: 320.ms)
-        .slideY(begin: 0.05, duration: 420.ms, curve: Curves.easeOutCubic);
-  }
-
-  Widget _buildLogo(bool isWide) {
-    final size = isWide ? 84.0 : 76.0;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: AppColors.primaryGradient,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.electric.withValues(alpha: 0.28),
-                    blurRadius: 34,
-                    offset: const Offset(0, 16),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.bgSurface.withValues(alpha: 0.38),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.18),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Center(
-            child: Icon(
-              Icons.shield_rounded,
-              color: Colors.white,
-              size: isWide ? 42 : 38,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCommandSurface(bool isWide) {
-    final borderColor = _urlFocusNode.hasFocus
-        ? AppColors.electric
-        : Colors.white.withValues(alpha: 0.16);
-
-    return Column(
-          children: [
-            Container(
-              height: isWide ? 62 : 58,
-              decoration: BoxDecoration(
-                color: AppColors.bgCardLight.withValues(alpha: 0.78),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: borderColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.30),
-                    blurRadius: 24,
-                    offset: const Offset(0, 16),
-                  ),
-                  if (_urlFocusNode.hasFocus)
-                    BoxShadow(
-                      color: AppColors.electric.withValues(alpha: 0.16),
-                      blurRadius: 30,
-                    ),
-                ],
-              ),
-              child: _buildUrlInput(),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(width: double.infinity, child: _buildActionButton()),
-          ],
-        )
-        .animate()
-        .fadeIn(delay: 140.ms, duration: 300.ms)
-        .slideY(begin: 0.04, duration: 360.ms, curve: Curves.easeOutCubic);
-  }
-
-  Widget _buildUrlInput() {
-    return TextField(
-      controller: _urlController,
-      focusNode: _urlFocusNode,
-      style: GoogleFonts.firaCode(
-        color: AppColors.textPrimary,
-        fontSize: 15,
-        fontWeight: FontWeight.w500,
-      ),
-      decoration: InputDecoration(
-        hintText: 'example.com',
-        prefixIcon: Padding(
-          padding: const EdgeInsets.only(left: 16, right: 8),
-          child: Icon(Icons.link_rounded, color: AppColors.textMuted, size: 20),
         ),
-        suffixIcon: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: IconButton(
-            tooltip: 'QR tara',
-            onPressed: _isLoading ? null : _openQrScanner,
-            style: IconButton.styleFrom(
-              backgroundColor: AppColors.bgSurface.withValues(alpha: 0.38),
-              foregroundColor: AppColors.textSecondary,
-              disabledForegroundColor: AppColors.textMuted,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
+      ),
+    ],
+  );
+
+  Widget _workspace(bool wide) => GlassCard(
+    padding: EdgeInsets.all(wide ? 32 : 22),
+    borderRadius: 20,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Yeni analiz',
+          style: TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.4,
           ),
         ),
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        filled: false,
-        contentPadding: const EdgeInsets.symmetric(vertical: 18),
-      ),
-      onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
-      onChanged: (_) => _inputSource = 'url',
-      enabled: !_isLoading,
-      textInputAction: TextInputAction.search,
-    );
-  }
-
-  Widget _buildActionButton() {
-    return SizedBox(
-      height: 56,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: AppColors.primaryGradient,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primary.withValues(alpha: 0.28),
-              blurRadius: 24,
-              offset: const Offset(0, 14),
-            ),
-          ],
+        const SizedBox(height: 8),
+        const Text(
+          'Kontrol etmek istediğiniz adresi girin.',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 14,
+            height: 1.5,
+          ),
         ),
-        child: ElevatedButton(
+        const SizedBox(height: 26),
+        const Text(
+          'Bağlantı adresi',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const ValueKey('url-input'),
+          controller: _urlController,
+          focusNode: _urlFocusNode,
+          enabled: !_isLoading,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          enableSuggestions: false,
+          textInputAction: TextInputAction.search,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com',
+            prefixIcon: Icon(Icons.link_outlined, size: 20),
+            helperText: 'Bağlantı cihazınızda açılmaz; sunucuda incelenir.',
+            helperMaxLines: 2,
+          ),
+          onChanged: (_) => _inputSource = 'url',
+          onSubmitted: _isLoading ? null : (value) => _analyzeUrl(value),
+        ),
+        const SizedBox(height: 22),
+        FilledButton.icon(
           onPressed: _isLoading ? null : () => _analyzeUrl(_urlController.text),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            disabledBackgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            padding: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 140),
-            child: _isLoading
-                ? Row(
-                    key: const ValueKey('loading'),
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: Colors.white.withValues(alpha: 0.9),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Analyzing...',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  )
-                : Row(
-                    key: const ValueKey('ready'),
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.security_rounded, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Analyze URL',
-                        style: GoogleFonts.inter(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
+          icon: _isLoading && !_isBatchLoading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primary,
                   ),
+                )
+              : const Icon(Icons.search_outlined, size: 20),
+          label: Text(
+            _isLoading && !_isBatchLoading
+                ? 'Analiz ediliyor…'
+                : 'Bağlantıyı analiz et',
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildErrorMessage() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.danger.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.danger.withValues(alpha: 0.28)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline_rounded, color: AppColors.danger, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _isLoading ? null : _openQrScanner,
+          icon: const Icon(Icons.qr_code_scanner, size: 20),
+          label: const Text('QR kod tara'),
+        ),
+        if (_isLoading) ...[
+          const SizedBox(height: 16),
+          Semantics(
+            liveRegion: true,
             child: Text(
-              _errorMessage!,
-              style: GoogleFonts.inter(color: AppColors.danger, fontSize: 13),
+              _isBatchLoading
+                  ? 'Dosya seçimi ve analizi sürüyor. Bu işlem bağlantıya göre zaman alabilir.'
+                  : 'Sunucudan sonuç bekleniyor. Bu işlem bağlantıya göre zaman alabilir.',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+                height: 1.5,
+              ),
             ),
           ),
         ],
-      ),
-    );
-  }
+        if (_errorMessage != null) ...[
+          const SizedBox(height: 16),
+          NoticeCard(
+            message: _errorMessage!,
+            color: AppColors.danger,
+            icon: Icons.error_outline,
+          ),
+        ],
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Divider(height: 1),
+        ),
+        _connectionSummary(),
+        if (_canUseStandalone) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Divider(height: 1),
+          ),
+          OutlinedButton.icon(
+            onPressed: _isLoading ? null : _pickAndAnalyzeFile,
+            icon: _isBatchLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.upload_file_outlined, size: 20),
+            label: Text(
+              _isBatchLoading ? 'Dosya işleniyor…' : 'Toplu URL analizi',
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'TXT / CSV URL listesi · En fazla 512 KB',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: _isLoading
+                ? null
+                : () => Navigator.of(context).pushNamed('/admin'),
+            icon: const Icon(Icons.admin_panel_settings_outlined, size: 18),
+            label: const Text('Bağımsız yönetim'),
+          ),
+        ],
+      ],
+    ),
+  );
 
-  Widget _buildFooter() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.only(top: 22),
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Colors.white.withValues(alpha: 0.10)),
+  Widget _connectionSummary() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          const Icon(Icons.dns_outlined, size: 18, color: AppColors.textMuted),
+          Text(
+            _api.isAllsafe ? 'ALLSAFE' : 'Bağımsız PhishCatch',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          StatusBadge(
+            label: _api.isAllsafe
+                ? _api.isSignedIn
+                      ? 'Oturum açık'
+                      : 'Giriş gerekli'
+                : 'Kurum kaydı kapalı',
+            color: _api.isAllsafe && !_api.isSignedIn
+                ? AppColors.warning
+                : AppColors.textSecondary,
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Text(
+        _api.isAllsafe
+            ? _api.allsafeServer!.host
+            : 'Taramalar ALLSAFE kurum geçmişine kaydedilmez.',
+        style: const TextStyle(
+          color: AppColors.textMuted,
+          fontSize: 12,
+          height: 1.5,
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.shield_outlined,
-            color: AppColors.textMuted.withValues(alpha: 0.78),
-            size: 14,
+      if (_api.isAllsafe) ...[
+        const SizedBox(height: 8),
+        Text(
+          _api.isSignedIn
+              ? 'Taramalar kurum hesabınızla ilişkilendirilir.'
+              : 'Analiz yapmak için kurum hesabınızla giriş yapın.',
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            height: 1.5,
           ),
-          const SizedBox(width: 8),
-          Text(
-            'PhishCatch v1.0',
-            style: GoogleFonts.inter(
-              color: AppColors.textMuted.withValues(alpha: 0.78),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: _isLoading ? null : _openConnection,
+            child: Text(_api.isSignedIn ? 'Hesabı yönet' : 'Hesaba giriş yap'),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ],
+  );
 }

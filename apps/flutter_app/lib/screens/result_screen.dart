@@ -1,472 +1,409 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 
-class ResultScreen extends StatefulWidget {
+class ResultScreen extends StatelessWidget {
   final AnalysisResult result;
-
   const ResultScreen({super.key, required this.result});
 
-  @override
-  State<ResultScreen> createState() => _ResultScreenState();
-}
-
-class _ResultScreenState extends State<ResultScreen> {
-  bool _showTechnicalDetails = false;
-
-  Color get _verdictColor {
-    if (widget.result.isMalicious) return AppColors.danger;
-    if (widget.result.isClean) return AppColors.safe;
-    return AppColors.warning;
-  }
-
-  IconData get _verdictIcon {
-    if (widget.result.isMalicious) return Icons.gpp_bad_rounded;
-    if (widget.result.isClean) return Icons.verified_user_rounded;
-    return Icons.shield_rounded;
-  }
-
-  String get _verdictTitle {
-    if (widget.result.isMalicious) return 'Riskli baglanti';
-    if (widget.result.isClean) return 'Guvenli gorunuyor';
-    return widget.result.scanStatus != 'complete'
-        ? 'Tarama tamamlanamadi'
-        : 'Emin degiliz';
-  }
-
-  String get _verdictDescription {
-    if (widget.result.isMalicious) {
-      return 'Bu baglanti riskli gorunuyor. Kisisel bilgi girme.';
-    }
-    if (widget.result.isClean) {
-      return 'Belirgin bir risk sinyali bulunmadi.';
-    }
-    return widget.result.scanStatus != 'complete'
-        ? 'Bazi kontroller tamamlanamadi. Bu sonuc baglantinin temiz oldugunu kanitlamaz.'
-        : 'Sonuc net degil. Acmadan once dikkatli olmak iyi olur.';
-  }
+  bool get _incomplete => result.scanStatus != 'complete';
+  Color get _color => result.isMalicious
+      ? AppColors.danger
+      : result.isClean
+      ? AppColors.safe
+      : AppColors.warning;
+  String get _title => result.isMalicious
+      ? 'Riskli bağlantı'
+      : result.isClean
+      ? 'Risk sinyali bulunmadı'
+      : result.scanStatus == 'partial'
+      ? 'Analiz kısmen tamamlandı'
+      : _incomplete
+      ? 'Analiz tamamlanamadı'
+      : 'Belirsiz sonuç';
+  String get _description => result.isMalicious
+      ? 'Oltalama veya zararlı içerik işaretleri bulundu. Bu bağlantıda kişisel bilgi paylaşmayın.'
+      : result.isClean
+      ? 'Tamamlanan kontroller belirgin bir risk göstermedi. Bu sonuç bir güvenlik garantisi değildir.'
+      : _incomplete
+      ? 'Bazı kontroller tamamlanamadı. Bu sonuç, bağlantının temiz olduğunu kanıtlamaz.'
+      : 'Kontroller kesin bir değerlendirme üretmedi. Bağlantıyı açmadan önce dikkatli olun.';
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bgDark,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        leading: IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.bgSurface.withValues(alpha: 0.72),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.glassBorder),
-            ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-          ),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          'Sonuc',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-        ),
-      ),
-      body: CyberBackdrop(
-        dense: MediaQuery.of(context).size.width < 720,
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 760;
-              return Center(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    isWide ? 44 : 22,
-                    24,
-                    isWide ? 44 : 22,
-                    32,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 860),
-                    child: _buildFlowSurface(isWide),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFlowSurface(bool isWide) {
-    return Container(
-          decoration: BoxDecoration(
-            color: AppColors.bgSurface.withValues(alpha: 0.76),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _verdictColor.withValues(alpha: 0.28)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.34),
-                blurRadius: 36,
-                offset: const Offset(0, 22),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              _buildHero(isWide),
-              _buildDivider(),
-              _buildUrlLine(),
-              _buildDivider(),
-              _buildRiskFlow(),
-              _buildDivider(),
-              _buildTechnicalToggle(),
-            ],
-          ),
-        )
-        .animate()
-        .fadeIn(duration: 280.ms)
-        .slideY(begin: 0.04, duration: 360.ms, curve: Curves.easeOutCubic);
-  }
-
-  Widget _buildHero(bool isWide) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        isWide ? 34 : 22,
-        isWide ? 34 : 28,
-        isWide ? 34 : 22,
-        isWide ? 30 : 24,
-      ),
-      child: isWide
-          ? Row(
-              children: [
-                _buildVerdictMark(isWide),
-                const SizedBox(width: 28),
-                Expanded(child: _buildVerdictCopy(isWide)),
-              ],
-            )
-          : Column(
-              children: [
-                _buildVerdictMark(isWide),
-                const SizedBox(height: 22),
-                _buildVerdictCopy(isWide),
-              ],
-            ),
-    );
-  }
-
-  Widget _buildVerdictMark(bool isWide) {
-    final size = isWide ? 104.0 : 92.0;
-    return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: _verdictColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _verdictColor.withValues(alpha: 0.36)),
-            boxShadow: [
-              BoxShadow(
-                color: _verdictColor.withValues(alpha: 0.16),
-                blurRadius: 30,
-              ),
-            ],
-          ),
-          child: Icon(
-            _verdictIcon,
-            color: _verdictColor,
-            size: isWide ? 58 : 50,
-          ),
-        )
-        .animate()
-        .scale(
-          begin: const Offset(0.72, 0.72),
-          duration: 420.ms,
-          curve: Curves.easeOutBack,
-        )
-        .fadeIn(duration: 220.ms);
-  }
-
-  Widget _buildVerdictCopy(bool isWide) {
-    return Column(
-      crossAxisAlignment: isWide
-          ? CrossAxisAlignment.start
-          : CrossAxisAlignment.center,
-      children: [
-        Text(
-          _verdictTitle,
-          textAlign: isWide ? TextAlign.left : TextAlign.center,
-          style: GoogleFonts.inter(
-            fontSize: isWide ? 34 : 26,
-            fontWeight: FontWeight.w900,
-            color: _verdictColor,
-            letterSpacing: 0,
-            height: 1.02,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          _verdictDescription,
-          textAlign: isWide ? TextAlign.left : TextAlign.center,
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            color: AppColors.textSecondary,
-            height: 1.5,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUrlLine() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      child: Row(
-        children: [
-          Icon(Icons.link_rounded, color: AppColors.accent, size: 18),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              widget.result.originalInput ?? widget.result.url,
-              style: GoogleFonts.firaCode(
-                color: AppColors.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRiskFlow() {
-    final malicious = widget.result.maliciousPercent;
-    final clean = widget.result.cleanPercent;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-      child: Column(
-        children: [
-          _buildRiskRow('Riskli', malicious, AppColors.danger),
-          const SizedBox(height: 16),
-          _buildRiskRow('Temiz', clean, AppColors.safe),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRiskRow(String label, double? value, Color color) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 58,
-          child: Text(
-            label,
-            style: GoogleFonts.inter(
-              color: AppColors.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width =
-                  constraints.maxWidth * ((value ?? 0) / 100).clamp(0.0, 1.0);
-              return Stack(
-                children: [
-                  Container(
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 520),
-                    curve: Curves.easeOutCubic,
-                    width: width,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-        const SizedBox(width: 14),
-        SizedBox(
-          width: 54,
-          child: Text(
-            value == null ? '—' : '${value.toStringAsFixed(1)}%',
-            textAlign: TextAlign.right,
-            style: GoogleFonts.firaCode(
-              color: color,
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTechnicalToggle() {
-    return Column(
-      children: [
-        InkWell(
-          onTap: () {
-            setState(() {
-              _showTechnicalDetails = !_showTechnicalDetails;
-            });
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            child: Row(
-              children: [
-                Icon(Icons.tune_rounded, color: AppColors.accent, size: 18),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Teknik detaylar',
-                    style: GoogleFonts.inter(
-                      color: AppColors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                Icon(
-                  _showTechnicalDetails
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded,
-                  color: AppColors.accent,
-                ),
-              ],
-            ),
-          ),
-        ),
-        AnimatedCrossFade(
-          firstChild: const SizedBox.shrink(),
-          secondChild: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Analiz sonucu')),
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 820),
             child: Column(
-              children: widget.result.stages.asMap().entries.map((entry) {
-                final idx = entry.key;
-                return _buildStageItem(
-                  entry.value,
-                  idx == widget.result.stages.length - 1,
-                );
-              }).toList(),
-            ),
-          ),
-          crossFadeState: _showTechnicalDetails
-              ? CrossFadeState.showSecond
-              : CrossFadeState.showFirst,
-          duration: const Duration(milliseconds: 160),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStageItem(StageResult stage, bool isLast) {
-    final color = _stageColor(
-      stage.status == 'completed' ? stage.verdict : 'unknown',
-    );
-    return Padding(
-      padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 9,
-            height: 9,
-            margin: const EdgeInsets.only(top: 5),
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        stage.scanner,
-                        style: GoogleFonts.inter(
-                          color: AppColors.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
+                GlassCard(
+                  padding: const EdgeInsets.all(28),
+                  borderRadius: 20,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: _color.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Icon(
+                              result.isMalicious
+                                  ? Icons.gpp_bad_outlined
+                                  : result.isClean
+                                  ? Icons.verified_user_outlined
+                                  : Icons.shield_outlined,
+                              color: _color,
+                              size: 30,
+                            ),
+                          ),
+                          StatusBadge(
+                            label: result.scanStatus == 'complete'
+                                ? 'Analiz tamamlandı'
+                                : result.scanStatus == 'partial'
+                                ? 'Kısmi sonuç'
+                                : 'Tamamlanamadı',
+                            color: _color,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _title,
+                          style: TextStyle(
+                            fontSize: 28,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                            color: _color,
+                            letterSpacing: -0.6,
+                          ),
                         ),
                       ),
-                    ),
-                    Text(
-                      stage.status == 'completed'
-                          ? _stageVerdictLabel(stage.verdict)
-                          : 'TAMAMLANMADI',
-                      style: GoogleFonts.firaCode(
-                        color: color,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
+                      const SizedBox(height: 12),
+                      Text(
+                        _description,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: AppColors.textSecondary,
+                          height: 1.7,
+                        ),
+                      ),
+                      if (result.isMalicious && _incomplete) ...[
+                        const SizedBox(height: 16),
+                        const NoticeCard(
+                          message:
+                              'Risk sinyali bulundu; diğer kontrollerin bir bölümü tamamlanamadı. Olasılık değerleri gösterilmiyor.',
+                        ),
+                      ],
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Divider(height: 1),
+                      ),
+                      const Text(
+                        'İncelenen bağlantı',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SelectableText(
+                        result.originalInput ?? result.url,
+                        style: const TextStyle(fontSize: 14, height: 1.6),
+                      ),
+                      if (result.normalizedUrl.isNotEmpty &&
+                          result.normalizedUrl !=
+                              (result.originalInput ?? result.url)) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Normalize edilmiş adres',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          result.normalizedUrl,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                GlassCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Model olasılıkları',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final cards = [
+                            _probability(
+                              'Riskli',
+                              _incomplete ? null : result.maliciousPercent,
+                              AppColors.danger,
+                            ),
+                            _probability(
+                              'Temiz',
+                              _incomplete ? null : result.cleanPercent,
+                              AppColors.safe,
+                            ),
+                          ];
+                          return constraints.maxWidth >= 360
+                              ? Row(
+                                  children: [
+                                    Expanded(child: cards[0]),
+                                    const SizedBox(width: 16),
+                                    Expanded(child: cards[1]),
+                                  ],
+                                )
+                              : Column(
+                                  children: [
+                                    cards[0],
+                                    const SizedBox(height: 16),
+                                    cards[1],
+                                  ],
+                                );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _incomplete
+                            ? 'Analiz eksik olduğu için olasılıklar kullanılamıyor.'
+                            : 'Değerler modelin tahminidir; ölçülmüş doğruluk oranı değildir.',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                GlassCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: ExpansionTile(
+                    title: const Text(
+                      'Analiz adımları',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ],
+                    subtitle: Text(
+                      '${result.stages.where((stage) => stage.status == 'completed').length} / ${result.stages.length} kontrol tamamlandı',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                    children: result.stages.isEmpty
+                        ? [
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: Text(
+                                'Sunucudan tamamlanmış kontrol bilgisi alınamadı.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ]
+                        : result.stages.map(_stage).toList(),
+                  ),
                 ),
-                if (stage.reason != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    stage.reason!,
-                    style: GoogleFonts.inter(
-                      color: AppColors.textMuted,
-                      fontSize: 12,
-                      height: 1.35,
+                if (result.centralScanId != null) ...[
+                  const SizedBox(height: 20),
+                  GlassCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(
+                              Icons.receipt_long_outlined,
+                              size: 18,
+                              color: AppColors.primary,
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'ALLSAFE tarama kaydı',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        SelectableText(
+                          result.centralScanId!,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.6,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Bu kayıt kurum hesabınızla ilişkilendirildi. Model eğitimi için ayrıca inceleme ve onay gerekir.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.add, size: 20),
+                  label: const Text('Yeni analiz'),
+                ),
               ],
             ),
           ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _probability(String label, double? value, Color color) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: AppColors.bgCardLight,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          value == null ? '—' : '${value.toStringAsFixed(1)}%',
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w600,
+            color: value == null ? AppColors.textMuted : color,
+          ),
+        ),
+        if (value != null) ...[
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: (value / 100).clamp(0, 1),
+              minHeight: 5,
+              backgroundColor: AppColors.glassBorder,
+              color: color,
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+
+  Widget _stage(StageResult stage) {
+    final complete = stage.status == 'completed';
+    final color = !complete
+        ? AppColors.warning
+        : stage.verdict == 'malicious'
+        ? AppColors.danger
+        : stage.verdict == 'clean'
+        ? AppColors.safe
+        : AppColors.unknown;
+    final status = !complete
+        ? stage.status == 'skipped'
+              ? 'Atlandı'
+              : 'Tamamlanamadı'
+        : stage.verdict == 'malicious'
+        ? 'Riskli'
+        : stage.verdict == 'clean'
+        ? 'Risk bulunmadı'
+        : 'Belirsiz';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                _scannerName(stage.scanner),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              StatusBadge(label: status, color: color),
+            ],
+          ),
+          if (stage.reason != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              stage.reason!,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+                height: 1.6,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildDivider() {
-    return Container(height: 1, color: Colors.white.withValues(alpha: 0.10));
-  }
-
-  Color _stageColor(String verdict) {
-    switch (verdict) {
-      case 'malicious':
-        return AppColors.danger;
-      case 'clean':
-        return AppColors.safe;
-      default:
-        return AppColors.warning;
-    }
-  }
-
-  String _stageVerdictLabel(String verdict) {
-    switch (verdict) {
-      case 'malicious':
-        return 'RISKLI';
-      case 'clean':
-        return 'TEMIZ';
-      default:
-        return 'BELIRSIZ';
-    }
-  }
+  String _scannerName(String name) => switch (name) {
+    'url_model' => 'URL modeli',
+    'html_model' => 'Sayfa içeriği modeli',
+    'virustotal' => 'VirusTotal',
+    'google_safe_browsing' => 'Google Safe Browsing',
+    _ => name,
+  };
 }

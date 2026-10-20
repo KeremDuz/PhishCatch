@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
@@ -32,7 +30,7 @@ class BatchResultScreen extends StatelessWidget {
         ),
         title: Text(
           'Toplu sonuc',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
       body: CyberBackdrop(
@@ -64,31 +62,21 @@ class BatchResultScreen extends StatelessWidget {
 
   Widget _buildSurface(bool isWide) {
     return Container(
-          decoration: BoxDecoration(
-            color: AppColors.bgSurface.withValues(alpha: 0.76),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.glassBorder),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.34),
-                blurRadius: 36,
-                offset: const Offset(0, 22),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              _buildHeader(isWide),
-              _divider(),
-              _buildStats(isWide),
-              _divider(),
-              _buildResultList(),
-            ],
-          ),
-        )
-        .animate()
-        .fadeIn(duration: 280.ms)
-        .slideY(begin: 0.04, duration: 360.ms, curve: Curves.easeOutCubic);
+      decoration: BoxDecoration(
+        color: AppColors.bgSurface.withValues(alpha: 0.76),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.glassBorder),
+      ),
+      child: Column(
+        children: [
+          _buildHeader(isWide),
+          _divider(),
+          _buildStats(isWide),
+          _divider(),
+          _buildResultList(),
+        ],
+      ),
+    );
   }
 
   Widget _buildHeader(bool isWide) {
@@ -143,7 +131,7 @@ class BatchResultScreen extends StatelessWidget {
         Text(
           'Toplu analiz',
           textAlign: isWide ? TextAlign.left : TextAlign.center,
-          style: GoogleFonts.inter(
+          style: TextStyle(
             fontSize: isWide ? 34 : 26,
             fontWeight: FontWeight.w900,
             color: AppColors.textPrimary,
@@ -157,7 +145,7 @@ class BatchResultScreen extends StatelessWidget {
           textAlign: isWide ? TextAlign.left : TextAlign.center,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: GoogleFonts.firaCode(
+          style: TextStyle(
             fontSize: 13,
             color: AppColors.textSecondary,
             fontWeight: FontWeight.w600,
@@ -213,7 +201,7 @@ class BatchResultScreen extends StatelessWidget {
             item.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.inter(
+            style: TextStyle(
               color: AppColors.textSecondary,
               fontSize: 12,
               fontWeight: FontWeight.w800,
@@ -221,7 +209,7 @@ class BatchResultScreen extends StatelessWidget {
           ),
           Text(
             item.value.toString(),
-            style: GoogleFonts.firaCode(
+            style: TextStyle(
               color: item.color,
               fontSize: 28,
               fontWeight: FontWeight.w900,
@@ -247,7 +235,7 @@ class BatchResultScreen extends StatelessWidget {
               const SizedBox(width: 10),
               Text(
                 'URL sonuclari',
-                style: GoogleFonts.inter(
+                style: TextStyle(
                   color: AppColors.textPrimary,
                   fontSize: 14,
                   fontWeight: FontWeight.w900,
@@ -271,7 +259,7 @@ class BatchResultScreen extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
+        color: AppColors.bgCardLight,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withValues(alpha: 0.20)),
       ),
@@ -288,7 +276,7 @@ class BatchResultScreen extends StatelessWidget {
             ),
             child: Text(
               item.index.toString(),
-              style: GoogleFonts.firaCode(
+              style: TextStyle(
                 color: color,
                 fontSize: 12,
                 fontWeight: FontWeight.w900,
@@ -307,7 +295,7 @@ class BatchResultScreen extends StatelessWidget {
                         item.input,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.firaCode(
+                        style: TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -317,7 +305,7 @@ class BatchResultScreen extends StatelessWidget {
                     const SizedBox(width: 10),
                     Text(
                       label,
-                      style: GoogleFonts.firaCode(
+                      style: TextStyle(
                         color: color,
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
@@ -331,7 +319,7 @@ class BatchResultScreen extends StatelessWidget {
                     subtitle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: TextStyle(
                       color: AppColors.textMuted,
                       fontSize: 12,
                       height: 1.35,
@@ -350,7 +338,7 @@ class BatchResultScreen extends StatelessWidget {
                     ? '—'
                     : '${item.riskPercent!.toStringAsFixed(0)}%',
                 textAlign: TextAlign.right,
-                style: GoogleFonts.firaCode(
+                style: TextStyle(
                   color: color,
                   fontSize: 13,
                   fontWeight: FontWeight.w900,
@@ -364,7 +352,7 @@ class BatchResultScreen extends StatelessWidget {
   }
 
   Widget _divider() {
-    return Container(height: 1, color: Colors.white.withValues(alpha: 0.10));
+    return Container(height: 1, color: AppColors.glassBorder);
   }
 
   Color _verdictColor(String verdict) {
