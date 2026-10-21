@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
-from pydantic import BaseModel, Field, SecretStr, model_validator
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(BACKEND_ROOT / ".env")
@@ -77,7 +77,14 @@ class Settings(BaseModel):
     virustotal_timeout_seconds: int = int(os.getenv("VIRUSTOTAL_TIMEOUT_SECONDS", "10"))
 
     google_safe_browsing_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_SAFE_BROWSING_API_KEY"))
-    google_web_risk_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_WEB_RISK_API_KEY"))
+    google_web_risk_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_WEB_RISK_API_KEY"), repr=False)
+    google_web_risk_allow_url_sharing: bool = Field(default_factory=lambda: _bool_env("GOOGLE_WEB_RISK_ALLOW_URL_SHARING"))
+    google_web_risk_allow_query_urls: bool = Field(default_factory=lambda: _bool_env("GOOGLE_WEB_RISK_ALLOW_QUERY_URLS"))
+    google_web_risk_daily_limit: int = Field(default_factory=lambda: int(os.getenv("GOOGLE_WEB_RISK_DAILY_LIMIT", "1000")), ge=0, le=100000)
+    google_web_risk_monthly_limit: int = Field(default_factory=lambda: int(os.getenv("GOOGLE_WEB_RISK_MONTHLY_LIMIT", "20000")), ge=0, le=100000)
+    google_web_risk_quota_path: str = Field(default_factory=lambda: os.getenv("GOOGLE_WEB_RISK_QUOTA_PATH", str(BACKEND_ROOT / "data" / "web-risk-usage.sqlite3")))
+    reputation_free_only: bool = Field(default_factory=lambda: _bool_env("REPUTATION_FREE_ONLY", "1"))
+    cloudflare_dns_security_enabled: bool = Field(default_factory=lambda: _bool_env("CLOUDFLARE_DNS_SECURITY_ENABLED", "0"))
 
     ml_model_path: str = os.getenv("ML_MODEL_PATH", "phishcatch_url_model.pkl")
     ml_scaler_path: str | None = Field(default_factory=lambda: os.getenv("ML_SCALER_PATH") or None)

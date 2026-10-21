@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 import hmac
 import io
+import re
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
@@ -351,6 +352,7 @@ def _create_training_sample(
         approved_for_training=payload.approved_for_training,
         url_features=url_features,
         html_features=html_features,
+        html_hash=_html_hash_from_observation(observation),
         notes=payload.notes,
         dedupe=True,
     )
@@ -391,6 +393,7 @@ def _create_training_sample_from_observation(
         approved_for_training=payload.approved_for_training,
         url_features=url_features,
         html_features=html_features,
+        html_hash=_html_hash_from_observation(observation),
         notes=payload.notes,
         dedupe=True,
     )
@@ -473,6 +476,13 @@ def _dict_from_observation(observation: dict[str, object] | None, key: str) -> d
 
 def _dict_or_none(value: object) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
+
+
+def _html_hash_from_observation(observation: dict[str, object] | None) -> str | None:
+    if not _dict_from_observation(observation, "html_features"):
+        return None
+    digest = _value_from_observation(observation, "html_hash")
+    return digest if digest and re.fullmatch(r"[0-9a-f]{64}", digest) else None
 
 
 def _list_of_dicts(value: object) -> list[dict[str, object]]:

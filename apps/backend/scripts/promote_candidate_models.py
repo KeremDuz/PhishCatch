@@ -4,7 +4,10 @@ import argparse
 import json
 import hashlib
 import math
+import os
 import shutil
+import stat
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -14,6 +17,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.ml.artifact_paths import (
+    UnsafeArtifactPath,
+    atomic_registry_write,
+    reject_linked_path,
+    validate_training_file,
+    validate_training_outputs,
+)
+from app.core.config import settings
 
 DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "models" / "registry.json"
 DEFAULT_BACKUP_DIR = PROJECT_ROOT / "models" / "backups"
@@ -25,6 +36,11 @@ DEFAULT_ACTIVE_MODELS = {
 
 def main() -> int:
     args = parse_args()
+    validate_training_file(args.registry_path)
+    validate_training_outputs(
+        args.registry_path, args.active_url_model, args.active_url_model.with_suffix(".metadata.json"),
+        args.active_html_model, args.active_html_model.with_suffix(".metadata.json"),
+    )
     registry = read_registry(args.registry_path)
     latest_run = registry.get("latest_run") or {}
     models = latest_run.get("models") or {}
@@ -73,7 +89,7 @@ def main() -> int:
 
     if not args.dry_run:
         args.registry_path.parent.mkdir(parents=True, exist_ok=True)
-        args.registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+        atomic_registry_write(args.registry_path, json.dumps(registry, indent=2))
 
     return 1 if any(result["status"] == "rejected" for result in promotions.values()) else 0
 
@@ -82,8 +98,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Promote retrained candidate models after metric gates pass.")
     parser.add_argument("--registry-path", type=Path, default=DEFAULT_REGISTRY_PATH)
     parser.add_argument("--model", choices=("url", "html", "both"), default="both")
-    parser.add_argument("--active-url-model", type=Path, default=DEFAULT_ACTIVE_MODELS["url"])
-    parser.add_argument("--active-html-model", type=Path, default=DEFAULT_ACTIVE_MODELS["html"])
+    parser.add_argument("--active-url-model", type=Path, default=Path(settings.ml_model_path) if settings.ml_model_path else DEFAULT_ACTIVE_MODELS["url"])
+    parser.add_argument("--active-html-model", type=Path, default=Path(settings.html_model_path) if settings.html_model_path else DEFAULT_ACTIVE_MODELS["html"])
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
     parser.add_argument("--min-rows", type=int, default=500, help="Minimum holdout rows, not total training rows.")
     parser.add_argument("--min-precision", type=float, default=0.98)
@@ -153,6 +169,18 @@ def evaluate_and_promote(
 
     metadata_path = Path(str(model_result.get("metadata_path") or candidate_path.with_suffix(".metadata.json")))
     active_metadata_path = active_path.with_suffix(".metadata.json")
+    try:
+        # Reject every alias before backups or either active artifact is touched.
+        paths = [candidate_path, active_path, active_metadata_path]
+        if metadata_path.exists():
+            paths.append(metadata_path)
+        for path in paths:
+            reject_linked_path(path.absolute())
+        validate_training_outputs(*paths)
+        if not candidate_path.is_file() or (metadata_path.exists() and not metadata_path.is_file()):
+            raise UnsafeArtifactPath("Promotion inputs must be regular files")
+    except (OSError, UnsafeArtifactPath) as exc:
+        return rejected(str(exc))
     result = {
         "status": "promoted" if not dry_run else "would_promote",
         "promoted_at": datetime.now(timezone.utc).isoformat(),
@@ -242,16 +270,42 @@ def backup_existing(
     if no_backup or not path.exists():
         return None
 
+    reject_linked_path(backup_dir.absolute())
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{model_name}_{timestamp}{path.suffix}"
-    shutil.copy2(path, backup_path)
+    copy_atomic(path, backup_path, overwrite=False)
     return backup_path
 
 
-def copy_atomic(source: Path, target: Path) -> None:
-    temporary = target.with_name(f"{target.name}.tmp")
-    shutil.copy2(source, temporary)
-    temporary.replace(target)
+def copy_atomic(source: Path, target: Path, *, overwrite: bool = True) -> None:
+    reject_linked_path(source.absolute())
+    reject_linked_path(target.absolute())
+    validate_training_outputs(source, target)
+    if not source.is_file() or (target.exists() and not target.is_file()):
+        raise UnsafeArtifactPath("Promotion requires regular source and target files")
+    if not overwrite and target.exists():
+        raise UnsafeArtifactPath("Backup already exists; choose a new timestamp")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=target.parent, prefix=f".{target.name}.", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            with source.open("rb") as input_file:
+                shutil.copyfileobj(input_file, output)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(stat.S_IMODE(source.stat().st_mode))
+        reject_linked_path(target.absolute())
+        validate_training_outputs(source, target)
+        if overwrite:
+            temporary.replace(target)
+        else:
+            # Backups are immutable. Atomic link creation fails if another
+            # process has already claimed the destination; never truncate it.
+            os.link(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def rejected(reason: str) -> dict[str, Any]:

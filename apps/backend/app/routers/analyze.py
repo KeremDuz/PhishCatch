@@ -95,7 +95,7 @@ def analyze_for_allsafe(
     features = _allowed_numeric_features(
         "url", extract_features_dict(feature_url), URL_FEATURE_COLUMNS
     )
-    html_features = _extract_html_features(response.stages)
+    html_features = _extract_html_features(response.stages, feature_url)
     if html_features:
         features.update(
             _allowed_numeric_features("html", html_features, HTML_MODEL_FEATURE_COLUMNS)
@@ -230,7 +230,7 @@ def _record_observation_safely(
         feature_url = final_url or response.normalized_url
         domain = _domain_from_url(feature_url)
         url_features = extract_features_dict(feature_url)
-        html_features = _extract_html_features(response.stages)
+        html_features = _extract_html_features(response.stages, feature_url)
         return training_store.add_observation(
             url=response.original_input or response.url,
             normalized_url=response.normalized_url,
@@ -244,6 +244,7 @@ def _record_observation_safely(
             clean_probability=response.clean_probability,
             url_features=url_features,
             html_features=html_features,
+            html_hash=_extract_html_hash(response.stages, feature_url),
             scanner_results=[
                 stage.model_dump(mode="json") for stage in response.stages
             ],
@@ -253,11 +254,45 @@ def _record_observation_safely(
         return None
 
 
-def _extract_html_features(stages: list[StageResult]) -> dict[str, object] | None:
-    for stage in stages:
+def _extract_html_features(stages: list[StageResult], feature_url: str) -> dict[str, object] | None:
+    stage = _html_training_stage(stages, feature_url)
+    if stage is not None:
+        return stage.training_features["html_features"]
+    return None
+
+
+def _html_training_stage(stages: list[StageResult], feature_url: str) -> StageResult | None:
+    for stage in reversed(stages):
+        if stage.scanner != "HtmlScraper" or stage.status != "completed":
+            continue
         features = stage.training_features.get("html_features")
-        if isinstance(features, dict):
-            return features
+        if isinstance(features, dict) and features:
+            # A retained alert may refer to the pre-render page. Keep its scan
+            # evidence, but never attach that feature vector to a different URL.
+            source_url = stage.training_features.get("feature_url")
+            final_url = stage.details.get("final_url")
+            if ((source_url is not None and source_url != feature_url) or
+                (final_url is not None and final_url != feature_url)):
+                return None
+            return stage
+    return None
+
+
+def _extract_html_hash(stages: list[StageResult], feature_url: str) -> str | None:
+    """Accept identity only from the scanner that extracted the stored features."""
+    stage = _html_training_stage(stages, feature_url)
+    if stage is None:
+        return None
+    identity = stage.training_features
+    digest = identity.get("html_hash")
+    if (
+        identity.get("html_hash_scheme") == "html-analyzed-utf8-sha256-v1"
+        and identity.get("feature_url") == feature_url
+        and stage.details.get("final_url") == feature_url
+        and isinstance(digest, str)
+        and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
+    ):
+        return digest
     return None
 
 

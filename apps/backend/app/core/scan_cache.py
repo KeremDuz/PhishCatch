@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-from threading import RLock
 import time
+from urllib.parse import urlsplit
 from collections import OrderedDict
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from threading import RLock
 
 from app.models.schemas import StageResult
 
@@ -71,6 +73,23 @@ class ScannerResultCache:
         }:
             return
         ttl = min(self.ttl_seconds, 300)
+        if scanner_name == "CloudflareDnsSecurity":
+            provider_ttl = result.details.get("provider_cache_ttl_seconds", 0)
+            if type(provider_ttl) is not int or provider_ttl <= 0:
+                return
+            ttl = min(ttl, provider_ttl)
+        # The provider's match expiry is an upper bound, even if our normal
+        # cache lifetime is longer. Never turn an expired match into a hit.
+        if scanner_name == "GoogleWebRisk" and result.verdict == "malicious":
+            try:
+                expires = datetime.fromisoformat(str(result.details["expire_time"]))
+                if expires.tzinfo is None:
+                    return
+                ttl = min(ttl, max(0, int((expires - datetime.now(UTC)).total_seconds())))
+            except (KeyError, ValueError, TypeError):
+                return
+            if ttl <= 0:
+                return
         if (
             scanner_name
             in {
@@ -79,6 +98,7 @@ class ScannerResultCache:
                 "VirusTotalScanner",
                 "URLhausScanner",
                 "LocalPhishingFeed",
+                "CloudflareDnsSecurity",
             }
             and result.verdict != "malicious"
         ):
@@ -102,6 +122,14 @@ class ScannerResultCache:
                 self._entries.popitem(last=False)
 
     def _key(self, scanner_name: str, url: str) -> str:
+        if scanner_name == "CloudflareDnsSecurity":
+            # Domain context does not vary by URL path or query. This also
+            # deduplicates same-host redirect hops without retaining raw URLs.
+            try:
+                url = (urlsplit(url).hostname or "").rstrip(".").encode("idna").decode("ascii").lower()
+            except (ValueError, UnicodeError):
+                # Cache lookup must not bypass the scanner's unavailable result.
+                url = "invalid-host\0" + url
         digest = hashlib.sha256(
             f"{self.version}\0{scanner_name}\0{url}".encode("utf-8")
         ).hexdigest()

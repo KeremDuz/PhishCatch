@@ -51,7 +51,10 @@ def main() -> None:
 
             page = PageArtifact.from_wire(payload["page"])
             scanner = HtmlScraperScanner(
-                model_path=payload["model_path"], browser_render_enabled=False
+                model_path=payload["model_path"],
+                browser_render_enabled=payload.get("browser_render_enabled", False) is True,
+                browser_timeout_ms=payload.get("browser_timeout_ms", 7000),
+                browser_socket_path=payload.get("browser_socket_path"),
             )
             scanner._safe_get = lambda url, headers: (
                 BufferedPageResponse(page),
@@ -66,7 +69,7 @@ def main() -> None:
         else:
             raise ValueError("invalid_job")
     except FetchFailure as exc:
-        result = {"error": exc.code, "safety": exc.safety}
+        result = exc.to_wire()
     except Exception:  # noqa: BLE001 - redact every worker diagnostic at the boundary.
         result = {"error": "analysis_worker_failed"}
     output = json.dumps(result, allow_nan=False).encode()

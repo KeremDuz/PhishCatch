@@ -10,7 +10,7 @@ Python 3.12 ile ayrı bir sanal ortam kullanın. Çalışma zamanı bağımlıl�
 python -m pip install --require-hashes -r requirements.lock
 ```
 
-Testler için `requirements-dev.lock` kullanılır. Playwright ile tarayıcı analizi isteğe bağlıdır; `requirements-browser.lock` ve ayrıca Playwright Chromium kurulumu gerekir. Tarayıcı analizi varsayılan olarak kapalıdır. `requirements.txt` eski kurulum komutları için çalışma zamanı lock dosyasına yönlendirir.
+Testler için `requirements-dev.lock` kullanılır. Ağsız tarayıcı kanıtı ayrı renderer imajı ve Unix socket ile isteğe bağlıdır; Chromium analiz servisi veya ALLSAFE ağı üzerinde başlatılmaz. `requirements-browser.lock` yalnız bağımlılık kaynağıdır, tek başına güvenli çalışma ortamı değildir. Renderer varsayılan olarak kapalıdır. `requirements.txt` eski kurulum komutları için çalışma zamanı lock dosyasına yönlendirir.
 
 Lock dosyaları Python 3.12 ve pip-tools 7.6.2 ile güncellenir:
 

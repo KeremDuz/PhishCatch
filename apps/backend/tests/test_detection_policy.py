@@ -126,7 +126,10 @@ def test_standard_checkout_is_not_phishing_evidence(monkeypatch):
     assert dom.details["input_summary"].get("pin_otp", 0) == 0
     assert dom.details["input_summary"].get("identity", 0) == 0
     assert "private-token-do-not-store" not in result.model_dump_json()
-    assert _public_result(result, result.url).final_verdict == "clean"
+    # Ordinary payment controls are not threat evidence, but the embedded page
+    # and script's data flow have not been inspected by the static scanner.
+    assert result.scan_status == "partial"
+    assert _public_result(result, result.url).final_verdict == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -218,13 +221,14 @@ def test_padding_does_not_make_unrendered_shell_complete(monkeypatch, padding):
     assert _public_result(result, result.url).final_verdict == "unknown"
 
 
-def test_real_static_login_with_keyboard_validation_is_not_a_dynamic_shell(monkeypatch):
-    result, _ = analyze(
+def test_login_keyboard_validation_is_missing_coverage_not_threat_evidence(monkeypatch):
+    result, dom = analyze(
         monkeypatch,
         '<html><title>Sign in</title><form method="post"><input type="password"><button>Continue</button></form><script>document.onkeydown=validate;</script></html>',
     )
-    assert result.scan_status == "complete"
-    assert result.final_verdict == "clean"
+    assert dom.details["rule_threat_score"] == 0
+    assert result.scan_status == "partial"
+    assert result.final_verdict == "unknown"
 
 
 def test_repeated_title_and_logo_brand_claim_are_one_signal(monkeypatch):

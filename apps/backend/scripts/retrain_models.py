@@ -29,6 +29,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.config import settings
+from app.ml.artifact_paths import (
+    atomic_registry_write,
+    validate_training_file,
+    validate_training_outputs,
+)
 from app.ml.incremental_model import IncrementalBinaryClassifier
 from app.ml.feature_extractor import URL_FEATURE_COLUMNS
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS
@@ -47,6 +52,22 @@ TARGET_COLUMN = "result"
 def main() -> int:
     args = parse_args()
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    url_path = args.model_dir / f"phishcatch_url_model_{timestamp}.pkl"
+    html_path = args.model_dir / f"phishcatch_html_model_{timestamp}.pkl"
+    artifact_outputs = [url_path, url_path.with_suffix(".metadata.json"),
+                        html_path, html_path.with_suffix(".metadata.json")]
+    for path in artifact_outputs:
+        validate_training_file(path, new_candidate=True)
+    validate_training_file(args.registry_path)
+    all_outputs = artifact_outputs + [args.registry_path]
+    if args.export_first:
+        dataset_outputs = [args.dataset_dir / URL_OUTPUT_NAME, args.dataset_dir / HTML_OUTPUT_NAME]
+        for path in dataset_outputs:
+            validate_training_file(path)
+        all_outputs.extend(dataset_outputs)
+    validate_training_outputs(*all_outputs)
+
     if args.export_first:
         export_training_datasets(
             db_path=args.db_path,
@@ -54,7 +75,6 @@ def main() -> int:
             include_unapproved=args.include_unapproved,
         )
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     args.model_dir.mkdir(parents=True, exist_ok=True)
     args.registry_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +83,7 @@ def main() -> int:
         dataset_path=args.dataset_dir / URL_OUTPUT_NAME,
         feature_columns=URL_FEATURE_COLUMNS,
         build_model=lambda: build_url_model(args, URL_FEATURE_COLUMNS),
-        model_path=args.model_dir / f"phishcatch_url_model_{timestamp}.pkl",
+        model_path=url_path,
         min_samples=args.min_samples,
         test_size=args.test_size,
         threshold=args.threshold,
@@ -75,7 +95,7 @@ def main() -> int:
         dataset_path=args.dataset_dir / HTML_OUTPUT_NAME,
         feature_columns=HTML_MODEL_FEATURE_COLUMNS,
         build_model=lambda: build_html_candidate_model(args, HTML_MODEL_FEATURE_COLUMNS),
-        model_path=args.model_dir / f"phishcatch_html_model_{timestamp}.pkl",
+        model_path=html_path,
         min_samples=args.min_samples,
         test_size=args.test_size,
         threshold=args.threshold,
@@ -99,7 +119,7 @@ def main() -> int:
             },
         },
     }
-    args.registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+    atomic_registry_write(args.registry_path, json.dumps(registry, indent=2))
 
     print("Retrain run finished")
     print(f"Registry: {args.registry_path}")
@@ -195,6 +215,9 @@ def train_candidate(
     seed: int,
     sample_weight_mode: str = "none",
 ) -> dict[str, Any]:
+    validate_training_file(model_path, new_candidate=True)
+    validate_training_file(model_path.with_suffix(".metadata.json"), new_candidate=True)
+    validate_training_outputs(dataset_path, model_path, model_path.with_suffix(".metadata.json"))
     if not dataset_path.exists():
         return skipped(name, dataset_path, f"Dataset not found: {dataset_path}")
 
@@ -239,7 +262,12 @@ def train_candidate(
     # The persisted candidate is exactly the evaluated model. Never refit it on
     # its holdout and then attach metrics from a different estimator.
     final_model = model
-    joblib.dump(final_model, model_path, compress=3)
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    validate_training_file(model_path, new_candidate=True)
+    # Exclusive creation never follows or truncates a concurrently introduced
+    # output alias. Existing candidates remain immutable.
+    with model_path.open("xb") as file:
+        joblib.dump(final_model, file, compress=3)
     proof = {"strategy": "grouped-temporal-v1", "dataset_sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
              "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
              "train_rows": len(train_indices), "test_rows": len(test_indices),
@@ -265,7 +293,9 @@ def train_candidate(
         "validation": metrics,
         "features": feature_columns,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    validate_training_file(metadata_path, new_candidate=True)
+    with metadata_path.open("x", encoding="utf-8") as file:
+        file.write(json.dumps(metadata, indent=2))
 
     return {
         "status": "trained",
