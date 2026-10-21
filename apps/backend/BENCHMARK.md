@@ -35,3 +35,5 @@ Son karar matrisi `clean/malicious/unknown` ayrıdır. Phishing'in temiz çıkma
 Replay işlem süresi model yüklemeyi, üretimdeki yardımcı süreçleri ve canlı ağı içermez. Arşivde gerçek yakalama süresi varsa ayrıca raporlanır. Bu iki süre sunucunun gerçek p95 gecikmesi veya kapasite garantisi olarak sunulmaz. Kontrolsüz gerçek şüpheli URL'ler ev sunucusundan topluca açılmaz.
 
 Testler sentetik arşivlerle aracı doğrular; gerçek dünya doğruluğunu ölçmez. [scikit-learn veri ayrımı ilkeleri](https://scikit-learn.org/stable/common_pitfalls.html).
+
+İmajda aynı CLI `python -m app.ml.benchmark_cli` olarak bulunur; `scripts/` dizini imaja alınmaz. Özel veri ve model dizinlerini salt okunur, yalnız çıktı dizinini yazılabilir bağlayarak ayrı `--network none` konteynerinde çalıştırılabilir. Çalışan analiz sürecinde ağ engeli veya benchmark çalıştırılmaz.
