@@ -2,6 +2,7 @@ import requests
 
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
+from app.services.web_risk_scanner import GoogleWebRiskScanner as GoogleWebRiskScanner
 
 
 class UrlhausScanner(BaseScanner):
@@ -84,22 +85,21 @@ class UrlhausScanner(BaseScanner):
                 details={"query_status": query_status},
             )
 
-        except requests.RequestException as e:
+        except requests.RequestException:
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
                 risk_score=0.0,
                 reason="URLhaus network error",
-                details={"error": str(e)},
+                details={"error": "provider_request_failed"},
             )
 
 
 class GoogleSafeBrowsingScanner(BaseScanner):
-    """Google Safe Browsing API v4 — 10.000 sorgu/gün, ücretsiz.
-    
-    Google'ın kara listesini kontrol eder. VirusTotal'dan ~2x fazla limit.
-    API key gerektirir (Google Cloud Console'dan alınır).
-    https://developers.google.com/safe-browsing/v4
+    """Legacy v4 adapter; not a promise of a current free quota or license.
+
+    New deployments should select one licensed provider and use the bounded
+    Web Risk adapter, or implement the v5 hash protocol for noncommercial use.
     """
 
     API_URL = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
@@ -137,8 +137,9 @@ class GoogleSafeBrowsingScanner(BaseScanner):
             }
 
             response = requests.post(
-                f"{self.API_URL}?key={self.api_key}",
+                self.API_URL,
                 json=payload,
+                headers={"x-goog-api-key": self.api_key},
                 timeout=5,
             )
 
@@ -177,109 +178,11 @@ class GoogleSafeBrowsingScanner(BaseScanner):
                 },
             )
 
-        except requests.RequestException as e:
+        except requests.RequestException:
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
                 risk_score=0.0,
                 reason="Google Safe Browsing network error",
-                details={"error": str(e)},
+                details={"error": "provider_request_failed"},
             )
-
-
-class GoogleWebRiskScanner(BaseScanner):
-    """Google Cloud Web Risk Lookup API.
-
-    Checks one URL against Google's Web Risk lists using the uris.search
-    endpoint. Web Risk can be used as a stronger production reputation signal
-    alongside Safe Browsing.
-    """
-
-    API_URL = "https://webrisk.googleapis.com/v1/uris:search"
-    THREAT_TYPES = (
-        "SOCIAL_ENGINEERING",
-        "MALWARE",
-        "UNWANTED_SOFTWARE",
-    )
-
-    def __init__(self, api_key: str | None = None) -> None:
-        super().__init__(name="GoogleWebRisk")
-        self.api_key = api_key
-
-    def scan(self, url: str) -> StageResult:
-        if not self.api_key:
-            return StageResult(
-                scanner=self.name,
-                verdict="unknown",
-                risk_score=0.0,
-                reason="GOOGLE_WEB_RISK_API_KEY not configured",
-            )
-
-        try:
-            params = [("threatTypes", threat_type) for threat_type in self.THREAT_TYPES]
-            params.extend((("uri", url), ("key", self.api_key)))
-            response = requests.get(self.API_URL, params=params, timeout=5)
-
-            if response.status_code != 200:
-                error_details = self._error_details(response)
-                return StageResult(
-                    scanner=self.name,
-                    verdict="unknown",
-                    risk_score=0.0,
-                    reason=f"Google Web Risk API error (status: {response.status_code})",
-                    details=error_details,
-                )
-
-            data = response.json()
-            threat = data.get("threat") or {}
-            threat_types = threat.get("threatTypes") or []
-
-            if not threat_types:
-                return StageResult(
-                    scanner=self.name,
-                    verdict="unknown",
-                    risk_score=0.0,
-                    reason="URL not flagged by Google Web Risk",
-                    details={"matches": 0},
-                )
-
-            return StageResult(
-                scanner=self.name,
-                verdict="malicious",
-                confidence=0.95,
-                risk_score=0.97,
-                reason=f"Google Web Risk: flagged as {', '.join(threat_types)}",
-                details={
-                    "threat_types": threat_types,
-                    "expire_time": threat.get("expireTime"),
-                },
-            )
-
-        except requests.RequestException as e:
-            return StageResult(
-                scanner=self.name,
-                verdict="unknown",
-                risk_score=0.0,
-                reason="Google Web Risk network error",
-                details={"error": str(e)},
-            )
-
-    @staticmethod
-    def _error_details(response: requests.Response) -> dict[str, object]:
-        details: dict[str, object] = {"status_code": response.status_code}
-        try:
-            error = response.json().get("error") or {}
-        except ValueError:
-            details["response"] = response.text[:200]
-            return details
-
-        if error.get("status"):
-            details["status"] = error["status"]
-        if error.get("message"):
-            details["message"] = error["message"]
-
-        for item in error.get("details") or []:
-            if isinstance(item, dict) and item.get("reason"):
-                details["reason"] = item["reason"]
-                break
-        return details

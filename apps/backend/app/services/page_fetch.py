@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -11,7 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -27,10 +28,91 @@ JSON_TYPES = {"application/json", "application/rdap+json"}
 
 
 class FetchFailure(requests.RequestException):
-    def __init__(self, code: str, safety: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        safety: dict[str, object] | None = None,
+        *,
+        redirect_chain: tuple[dict[str, object], ...] = (),
+        resolved_url: str | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.safety = safety
+        self.redirect_chain = redirect_chain
+        self.resolved_url = resolved_url
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "error": self.code,
+            "safety": self.safety,
+            "redirect_chain": list(self.redirect_chain),
+            "resolved_url": self.resolved_url,
+        }
+
+    @classmethod
+    def from_wire(cls, value: dict[str, object], original_url: str) -> FetchFailure:
+        """Check bounded worker metadata; it does not authorize any connection."""
+        chain = value.get("redirect_chain", [])
+        resolved = value.get("resolved_url")
+        safety = value.get("safety")
+        if not isinstance(chain, list) or len(chain) > MAX_REDIRECTS:
+            raise ValueError("Invalid failure chain")
+        if safety is not None and not isinstance(safety, dict):
+            raise ValueError("Invalid failure safety metadata")
+        expected = original_url
+        validated: list[dict[str, object]] = []
+        for hop in chain:
+            if not isinstance(hop, dict) or set(hop) != {"from", "to", "status_code", "kind"}:
+                raise ValueError("Invalid failure hop")
+            if hop["from"] != expected or not _public_url_shape(hop["from"]) or not _public_url_shape(hop["to"]):
+                raise ValueError("Invalid failure target")
+            if type(hop["status_code"]) is not int or not 100 <= hop["status_code"] <= 599:
+                raise ValueError("Invalid failure status")
+            if hop["kind"] not in {"http", "meta_refresh"}:
+                raise ValueError("Invalid failure redirect kind")
+            validated.append(dict(hop))
+            expected = hop["to"]
+        if resolved is not None and (resolved != expected or not _public_url_shape(resolved)):
+            raise ValueError("Invalid failure resolved target")
+        if chain and resolved is None:
+            raise ValueError("Missing failure resolved target")
+        return cls(str(value["error"]), safety, redirect_chain=tuple(validated), resolved_url=resolved)
+
+
+def _public_url_shape(value: object) -> bool:
+    """Reject impossible private worker targets without doing unbounded DNS."""
+    if not isinstance(value, str) or not 1 <= len(value) <= 2048:
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port == 0
+            or hostname in {"localhost", "localhost.localdomain"}
+            or hostname.endswith(".localhost")
+        ):
+            return False
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            return True  # DNS was validated by the fixed fetch worker.
+        from app.services.url_safety import _is_blocked_ip
+
+        return not _is_blocked_ip(address)
+    except (ValueError, UnicodeError):
+        return False
+
+
+@dataclass
+class _FetchProgress:
+    chain: list[dict[str, object]]
+    safe_hop_count: int = 0
+    last_safe_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,7 +237,7 @@ def fetch_page(url: str, headers: Mapping[str, str] | None = None) -> PageArtifa
             try:
                 result = run_worker("fetch", {"url": url}, timeout=35)
                 if "error" in result:
-                    raise FetchFailure(str(result["error"]), result.get("safety"))
+                    raise FetchFailure.from_wire(result, url)
                 page = PageArtifact.from_wire(result["page"])
             except WorkerFailure as exc:
                 raise FetchFailure(exc.code) from None
@@ -166,6 +248,8 @@ def fetch_page(url: str, headers: Mapping[str, str] | None = None) -> PageArtifa
     except FetchFailure as exc:
         if cache is not None:
             cache[url] = exc
+            if exc.resolved_url is not None:
+                cache[exc.resolved_url] = exc
         raise
     except requests.RequestException as exc:
         failure = FetchFailure("fetch_failed")
@@ -179,13 +263,30 @@ def fetch_page(url: str, headers: Mapping[str, str] | None = None) -> PageArtifa
 
 
 def _fetch_page(url: str, headers: Mapping[str, str] | None) -> PageArtifact:
+    progress = _FetchProgress([])
+    try:
+        return _fetch_page_with_progress(url, headers, progress)
+    except requests.RequestException as exc:
+        failure = exc if isinstance(exc, FetchFailure) else FetchFailure("fetch_failed")
+        # A redirect is observed before its destination's safety validation.
+        # Retain only hops whose two endpoints passed that validation.
+        failure.redirect_chain = tuple(
+            dict(hop) for hop in progress.chain[:progress.safe_hop_count]
+        )
+        failure.resolved_url = progress.last_safe_url
+        raise failure from None
+
+
+def _fetch_page_with_progress(
+    url: str, headers: Mapping[str, str] | None, progress: _FetchProgress
+) -> PageArtifact:
     if headers is None:
         headers = {
             "User-Agent": "PhishCatch/0.2 (+https://github.com/KeremDuz/PhishCatch)",
             "Accept": "text/html,application/xhtml+xml,application/json,application/rdap+json;q=0.9",
         }
     current = url
-    chain: list[dict[str, object]] = []
+    chain = progress.chain
     deadline = monotonic() + FETCH_BUDGET_SECONDS
     for _ in range(MAX_REDIRECTS + 1):
         if monotonic() >= deadline:
@@ -196,6 +297,8 @@ def _fetch_page(url: str, headers: Mapping[str, str] | None) -> PageArtifact:
                 "unsafe_destination",
                 {**(safety.details or {}), "reason": safety.reason},
             )
+        progress.safe_hop_count = len(chain)
+        progress.last_safe_url = current
         with public_http_request(
             "GET",
             current,

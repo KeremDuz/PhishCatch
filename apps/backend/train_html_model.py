@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import random
 import re
+import sys
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-import joblib
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import (
@@ -23,7 +21,6 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import GroupShuffleSplit
 
 from app.ml.html_feature_extractor import HTML_MODEL_FEATURE_COLUMNS, extract_html_features
 from app.ml.incremental_model import IncrementalBinaryClassifier
@@ -32,112 +29,29 @@ from app.ml.incremental_model import IncrementalBinaryClassifier
 BACKEND_ROOT = Path(__file__).resolve().parent
 MENDELEY_ROOT = BACKEND_ROOT / "Mendeley_dataset"
 INDEX_SQL_PATH = MENDELEY_ROOT / "index.sql"
-MODEL_OUTPUT_PATH = BACKEND_ROOT / "phishcatch_html_model.pkl"
-METADATA_OUTPUT_PATH = BACKEND_ROOT / "phishcatch_html_model.metadata.json"
+MODEL_OUTPUT_PATH = BACKEND_ROOT / "models" / "candidates" / "phishcatch_html_model_legacy.pkl"
+METADATA_OUTPUT_PATH = MODEL_OUTPUT_PATH.with_suffix(".metadata.json")
 MAX_HTML_BYTES = 1024 * 1024
 ROW_PATTERN = re.compile(
     r"^\((?P<rec_id>\d+), '(?P<url>.*)', '(?P<website>[^']+\.html)', (?P<result>[01]), '(?P<created_date>[^']+)'\),?$"
 )
 
 
-def main() -> None:
-    args = parse_args()
-    random.seed(args.seed)
-
-    print("1. Mendeley index ve HTML dosyalari okunuyor...", flush=True)
-    rows, skipped_rows = parse_mendeley_index(args.index_sql)
-    html_paths = html_file_index(args.dataset_root)
-    rows = [row for row in rows if row["website"] in html_paths]
-
-    use_all_data = args.use_all_data or args.no_balance
-    selected_rows = select_training_rows(rows, max_per_class=args.max_per_class, balance=not use_all_data, seed=args.seed)
-    print(f"Index satiri: {len(rows)} | atlanan SQL satiri: {skipped_rows}", flush=True)
-    print(f"Veri secimi: {'tum eslesen satirlar' if use_all_data else 'sinif dengeli orneklem'}", flush=True)
-    print(f"Egitim icin secilen satir: {len(selected_rows)} | dagilim: {dict(label_counts(selected_rows))}", flush=True)
-
-    print(f"2. HTML feature'lari cikariliyor... workers={args.workers}", flush=True)
-    records: list[dict[str, float]] = []
-    labels: list[int] = []
-    groups: list[str] = []
-
-    feature_tasks = [
-        (row, str(html_paths[row["website"]]))
-        for row in selected_rows
-    ]
-    for index, (feature_dict, label, group) in enumerate(
-        iter_feature_rows(feature_tasks, args.workers, args.chunk_size),
-        start=1,
-    ):
-        records.append(feature_dict)
-        labels.append(label)
-        groups.append(group)
-
-        if index % args.progress_every == 0:
-            print(f"  {index}/{len(selected_rows)} feature tamamlandi", flush=True)
-
-    feature_frame = pd.DataFrame.from_records(records, columns=HTML_MODEL_FEATURE_COLUMNS).fillna(0.0)
-    label_series = pd.Series(labels, name="result")
-    sample_weight, class_weights = build_sample_weights(label_series, args.class_weight)
-
-    print(f"Feature matrisi: {feature_frame.shape[0]} satir, {feature_frame.shape[1]} feature", flush=True)
-    print(f"Sinif agirligi: {args.class_weight} | {class_weights}", flush=True)
-
-    print("3. Domain-gruplu validation split ile model degerlendiriliyor...", flush=True)
-    train_indices, test_indices = next(
-        GroupShuffleSplit(n_splits=1, test_size=args.test_size, random_state=args.seed).split(
-            feature_frame,
-            label_series,
-            groups=groups,
-        )
+def main() -> int:
+    parse_args()
+    print(
+        "Bu eski HTML egitim komutu kaldirildi; hicbir model veya metadata "
+        "dosyasi yazilmadi. Dogrulanmis ornekleri "
+        "scripts/export_training_datasets.py ile aktarip scripts/retrain_models.py "
+        "ile aday model olusturun. Aktif model yalniz "
+        "scripts/promote_candidate_models.py kontrollerinden sonra degistirilebilir.",
+        file=sys.stderr,
     )
-
-    candidate = build_training_model(args)
-    candidate.fit(
-        feature_frame.iloc[train_indices],
-        label_series.iloc[train_indices],
-        sample_weight=sample_weight.iloc[train_indices] if sample_weight is not None else None,
-    )
-
-    probabilities = candidate.predict_proba(feature_frame.iloc[test_indices])[:, 1]
-    predictions = (probabilities >= args.threshold).astype(int)
-    metrics = calculate_metrics(label_series.iloc[test_indices], predictions, probabilities)
-    print_metrics(metrics)
-
-    print("4. Final model tum secili veriyle tekrar egitiliyor...", flush=True)
-    final_model = build_training_model(args)
-    final_model.fit(feature_frame, label_series, sample_weight=sample_weight)
-
-    joblib.dump(final_model, args.model_output, compress=3)
-    metadata = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "model_type": type(final_model).__name__,
-        "supports_partial_fit": hasattr(final_model, "partial_fit"),
-        "threshold": args.threshold,
-        "source": {
-            "index_sql": str(args.index_sql),
-            "dataset_root": str(args.dataset_root),
-            "rows_after_file_match": len(rows),
-            "workers": args.workers,
-            "chunk_size": args.chunk_size,
-            "selected_rows": len(selected_rows),
-            "selected_label_counts": dict(label_counts(selected_rows)),
-            "selection_mode": "all_matched_rows" if use_all_data else "balanced_sample",
-            "class_weight": args.class_weight,
-            "class_weights": class_weights,
-            "skipped_sql_rows": skipped_rows,
-            "max_html_bytes": MAX_HTML_BYTES,
-        },
-        "features": HTML_MODEL_FEATURE_COLUMNS,
-        "validation": metrics,
-    }
-    args.metadata_output.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-
-    print(f"Model kaydedildi: {args.model_output}", flush=True)
-    print(f"Metadata kaydedildi: {args.metadata_output}", flush=True)
+    return 2
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a compact HTML/DOM phishing model from the Mendeley dataset.")
+    parser = argparse.ArgumentParser(description="Retired HTML trainer: use scripts/retrain_models.py; no artifacts are written.")
     parser.add_argument("--index-sql", type=Path, default=INDEX_SQL_PATH)
     parser.add_argument("--dataset-root", type=Path, default=MENDELEY_ROOT / "dataset")
     parser.add_argument("--model-output", type=Path, default=MODEL_OUTPUT_PATH)
@@ -331,4 +245,4 @@ def print_metrics(metrics: dict[str, object]) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

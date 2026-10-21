@@ -3,17 +3,18 @@ from functools import lru_cache
 from app.core.config import settings
 from app.core.pipeline import ScanningPipeline
 from app.core.scan_cache import ScannerResultCache
-from app.services.ml_model_scanner import MLModelScanner
-from app.services.virustotal_scanner import VirusTotalScanner
-from app.services.url_resolver_scanner import UrlResolverScanner
-from app.services.rdap_scanner import RdapScanner
-from app.services.local_phishing_feed import LocalPhishingFeed
+from app.services.cloudflare_dns_scanner import CloudflareDnsSecurityScanner
 from app.services.html_scraper_scanner import HtmlScraperScanner
+from app.services.local_phishing_feed import LocalPhishingFeed
+from app.services.ml_model_scanner import MLModelScanner
+from app.services.rdap_scanner import RdapScanner
 from app.services.threat_intel_scanners import (
     GoogleSafeBrowsingScanner,
     GoogleWebRiskScanner,
     UrlhausScanner,
 )
+from app.services.url_resolver_scanner import UrlResolverScanner
+from app.services.virustotal_scanner import VirusTotalScanner
 from app.storage import TrainingStore
 
 
@@ -37,23 +38,35 @@ def get_scanning_pipeline() -> ScanningPipeline:
             settings.phishing_feed_path, settings.phishing_feed_max_age_hours
         ),
     ]
-    if settings.urlhaus_auth_key:
+    if settings.cloudflare_dns_security_enabled:
+        threat_intel_scanners.append(CloudflareDnsSecurityScanner())
+
+    # The free profile cannot activate a billed/credentialed legacy provider
+    # merely because an old environment file still contains a key.
+    if settings.urlhaus_auth_key and not settings.reputation_free_only:
         threat_intel_scanners.append(UrlhausScanner(auth_key=settings.urlhaus_auth_key))
 
-    # Google Safe Browsing — key varsa ekle (10K/gün)
-    if settings.google_safe_browsing_api_key:
+    # Select a single Google source. These are not independent votes.
+    if settings.google_safe_browsing_api_key and not settings.google_web_risk_api_key and not settings.reputation_free_only:
         threat_intel_scanners.append(
             GoogleSafeBrowsingScanner(api_key=settings.google_safe_browsing_api_key)
         )
 
-    # Google Web Risk — key varsa ekle (production reputation sinyali)
-    if settings.google_web_risk_api_key:
+    # A key alone does not authorize full-URL sharing.
+    if settings.google_web_risk_api_key and not settings.reputation_free_only:
         threat_intel_scanners.append(
-            GoogleWebRiskScanner(api_key=settings.google_web_risk_api_key)
+            GoogleWebRiskScanner(
+                api_key=settings.google_web_risk_api_key,
+                allow_url_sharing=settings.google_web_risk_allow_url_sharing,
+                allow_query_urls=settings.google_web_risk_allow_query_urls,
+                quota_path=settings.google_web_risk_quota_path,
+                daily_limit=settings.google_web_risk_daily_limit,
+                monthly_limit=settings.google_web_risk_monthly_limit,
+            )
         )
 
     # VirusTotal — key varsa ekle (opsiyonel, düşük limit; çoklu key ile 429 rotasyonu desteklenir)
-    if settings.virustotal_api_keys:
+    if settings.virustotal_api_keys and not settings.reputation_free_only:
         threat_intel_scanners.append(VirusTotalScanner(settings=settings))
 
     scanners = [

@@ -1,18 +1,21 @@
 import importlib.util
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 
 from app.core.risk_aggregator import RiskAggregator
 from app.core.scan_cache import ScannerResultCache
 from app.models.schemas import AnalyzeUrlResponse, StageResult
 from app.services.base_scanner import BaseScanner
 from app.services.page_fetch import page_fetch_session
+from app.services.reputation_budget import lookup_session
 
 EXTERNAL_REPUTATION_SCANNERS = {
     "URLhausScanner",
     "GoogleSafeBrowsing",
     "GoogleWebRisk",
     "VirusTotalScanner",
+    "CloudflareDnsSecurity",
 }
 
 
@@ -40,7 +43,7 @@ class ScanningPipeline:
         self.fetch_worker = fetch_worker
 
     def run(self, url: str, original_input: str | None = None) -> AnalyzeUrlResponse:
-        with page_fetch_session(use_worker=self.fetch_worker):
+        with page_fetch_session(use_worker=self.fetch_worker), lookup_session():
             return self._run(url, original_input)
 
     def _run(self, url: str, original_input: str | None) -> AnalyzeUrlResponse:
@@ -61,6 +64,19 @@ class ScanningPipeline:
                         [local],
                         {},
                         decided_by="ThreatIntelShortCircuit",
+                    )
+
+        # DNS filtering is domain context, not proof of phishing. A filtered
+        # target remains unknown, and no hostile content is fetched for it.
+        for scanner in self.threat_intel_scanners:
+            if scanner.name == "CloudflareDnsSecurity":
+                dns = self._scan_with_cache(scanner, url)
+                if dns.status == "completed" and dns.details.get("requires_review") is True:
+                    return self._build_response(
+                        url, original_input,
+                        [dns, StageResult(scanner="TargetContentCoverage", verdict="unknown",
+                                          status="skipped", reason="Content was not fetched after a security DNS filter warning")],
+                        {}, decided_by="DnsSecurityReview",
                     )
 
         if self.redirect_resolver is not None:
@@ -271,10 +287,11 @@ class ScanningPipeline:
                 if stage.status == "completed" and stage.verdict == "malicious"
             ]
             missing = [stage for stage in results if stage.status != "completed"]
-            selected = (hits or missing or results)[0].model_copy(deep=True)
+            reviews = [stage for stage in results if stage.status == "completed" and stage.details.get("requires_review") is True]
+            selected = (hits or reviews or missing or results)[0].model_copy(deep=True)
             selected.details["checked_targets"] = list(targets)
             combined.append(selected)
-            if hits and missing:
+            if (hits or reviews) and missing:
                 combined.append(
                     StageResult(
                         scanner=f"{name}Coverage",
@@ -374,7 +391,7 @@ class ScanningPipeline:
             max_workers=len(self.threat_intel_scanners)
         ) as executor:
             future_to_scanner = {
-                executor.submit(self._scan_with_cache, scanner, url): (index, scanner)
+                executor.submit(copy_context().run, self._scan_with_cache, scanner, url): (index, scanner)
                 for index, scanner in enumerate(self.threat_intel_scanners)
             }
             for future in as_completed(future_to_scanner):
@@ -580,7 +597,15 @@ class ScanningPipeline:
             api_key_configured = bool(getattr(scanner, "api_key", None))
             details["api_key_configured"] = api_key_configured
             details["threat_types"] = list(getattr(scanner, "THREAT_TYPES", ()))
-            status = "ok" if api_key_configured else "degraded"
+            details["url_sharing_enabled"] = bool(getattr(scanner, "allow_url_sharing", False))
+            details["query_url_sharing_enabled"] = bool(getattr(scanner, "allow_query_urls", False))
+            status = "ok" if api_key_configured and details["url_sharing_enabled"] else "degraded"
+
+        elif scanner.name == "CloudflareDnsSecurity":
+            details["scope"] = "hostname_only"
+            details["account_required"] = False
+            details["publishes_url_scans"] = False
+            status = "ok"
 
         elif scanner.name == "VirusTotalScanner":
             settings = getattr(scanner, "settings", None)

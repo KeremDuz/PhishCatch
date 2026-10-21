@@ -75,6 +75,56 @@ class DomAssessment:
     context: dict[str, Any]
 
 
+def dynamic_coverage_reasons(
+    soup: BeautifulSoup, findings: dict[str, Any]
+) -> list[str]:
+    """Identify content/data flows the static scanner did not inspect.
+
+    This is a coverage check, not JavaScript or iframe reputation. Rendering a
+    DOM alone would not establish where handlers send a user's sensitive data.
+    """
+    sensitive = any(
+        findings.get(key)
+        for key in (
+            "credentials", "credit_card", "cvv", "expiry", "banking",
+            "identity", "crypto", "pin_otp",
+        )
+    )
+    reasons: list[str] = []
+    executable_scripts = any(
+        (
+            not str(script.get("type") or "").strip()
+            or str(script.get("type")).strip().lower() == "module"
+            or "javascript" in str(script.get("type")).lower()
+            or "ecmascript" in str(script.get("type")).lower()
+        )
+        and (script.get("src") or script.get_text(strip=True))
+        for script in soup.find_all("script")
+    )
+    event_handlers = any(
+        str(attribute).lower().startswith("on") and bool(value)
+        for element in soup.find_all(True)
+        for attribute, value in element.attrs.items()
+    )
+    javascript_links = any(
+        str(element.get(attribute) or "").strip().lower().startswith("javascript:")
+        for element in soup.find_all(True)
+        for attribute in ("href", "src", "action", "formaction")
+    )
+    if sensitive and (executable_scripts or event_handlers or javascript_links):
+        reasons.append("sensitive_javascript_flow_uninspected")
+    # Both same-origin and unrelated frames can contain a login form. Never
+    # visit their URLs here: the bounded fetcher analyzed only the outer page.
+    if any(
+        frame.get("srcdoc")
+        or str(frame.get("src") or "").strip().lower()
+        not in {"", "about:blank"}
+        for frame in soup.find_all("iframe")
+    ):
+        reasons.append("embedded_frame_content_uninspected")
+    return reasons
+
+
 def assess_dom(
     soup: BeautifulSoup,
     page_url: str,
@@ -119,6 +169,10 @@ def assess_dom(
     if sensitive and unsupported:
         review = True
         reasons.append("Form submission destination could not be assessed statically")
+    dynamic_reasons = dynamic_coverage_reasons(soup, findings)
+    if dynamic_reasons:
+        review = True
+        reasons.append("Sensitive script behavior or embedded content was not inspected")
     # Keyboard, clipboard, autocomplete, CSRF, normal iframes and sensitive inputs
     # are observations only. A regex is not proof of keylogging/exfiltration.
     return DomAssessment(
@@ -126,10 +180,12 @@ def assess_dom(
         reasons,
         review,
         {
-            "policy_version": "dom-v2",
+            "policy_version": "dom-v3",
             "sensitive_families": [key for key, present in families.items() if present],
             "external_form_actions": external,
             "unsupported_form_actions": unsupported,
+            "dynamic_review_reasons": dynamic_reasons,
+            "sensitive_script_transfer_observed": sensitive and bool(js.get("exfiltration")),
             "strong_signal": sensitive and external > 0 and brand_score >= 0.45,
         },
     )

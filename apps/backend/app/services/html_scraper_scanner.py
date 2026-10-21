@@ -1,21 +1,33 @@
+import hashlib
+import os
 import re
 import unicodedata
 from pathlib import Path
+from urllib.parse import urlparse
 
 import joblib
 import requests
 from bs4 import BeautifulSoup, UnicodeDammit
-from urllib.parse import urlparse
 
 from app.ml.html_feature_extractor import extract_html_features_dataframe
 from app.models.schemas import StageResult
 from app.services.base_scanner import BaseScanner
 from app.services.browser_renderer import BrowserRenderResult, render_page
+from app.services.html_policy import (
+    DomAssessment,
+    assess_dom,
+    dynamic_coverage_reasons,
+    external_form_targets,
+    resolve_target,
+    site_key,
+)
 from app.services.page_fetch import BufferedPageResponse, fetch_page
-from app.services.html_policy import assess_dom, external_form_targets, resolve_target, site_key
-from app.services.url_heuristic_scanner import BRAND_TERMS, FREE_HOSTING_SUFFIXES, LEGITIMATE_BRAND_HOSTS
+from app.services.url_heuristic_scanner import (
+    BRAND_TERMS,
+    FREE_HOSTING_SUFFIXES,
+    LEGITIMATE_BRAND_HOSTS,
+)
 from app.utils.url_utils import hostname_matches_allowed
-
 
 # ─── Hacker'ın çalmak istediği veri türleri ve bunları yakalayan kalıplar ───
 
@@ -355,6 +367,7 @@ class HtmlScraperScanner(BaseScanner):
         browser_timeout_ms: int = 7000,
         browser_screenshot_enabled: bool = False,
         isolated: bool = False,
+        browser_socket_path: str | None = None,
     ) -> None:
         super().__init__(name="HtmlScraper")
         self.max_redirects = 5
@@ -364,13 +377,20 @@ class HtmlScraperScanner(BaseScanner):
         self.browser_timeout_ms = browser_timeout_ms
         self.browser_screenshot_enabled = browser_screenshot_enabled
         self.isolated = isolated
+        self.browser_socket_path = browser_socket_path or os.getenv("PHISHCATCH_RENDERER_SOCKET")
 
     def scan(self, url: str) -> StageResult:
         try:
             if self.isolated:
                 from app.services.worker_process import run_worker
                 page = fetch_page(url)
-                result = run_worker("html", {"page": page.to_wire(), "model_path": self.model_path}, timeout=20)
+                result = run_worker("html", {
+                    "page": page.to_wire(),
+                    "model_path": self.model_path,
+                    "browser_render_enabled": self.browser_render_enabled,
+                    "browser_timeout_ms": self.browser_timeout_ms,
+                    "browser_socket_path": self.browser_socket_path,
+                }, timeout=20)
                 if "error" in result:
                     raise ValueError("Isolated HTML analysis failed")
                 return StageResult.model_validate({**result["stage"], "training_features": result["training_features"]})
@@ -383,8 +403,6 @@ class HtmlScraperScanner(BaseScanner):
             except requests.RequestException:
                 response.close()
                 raise
-            parsed_url = urlparse(final_url)
-
             content_type = response.headers.get("Content-Type", "")
             if content_type.split(";", 1)[0].strip().lower() not in {"text/html", "application/xhtml+xml"}:
                 response.close()
@@ -415,12 +433,17 @@ class HtmlScraperScanner(BaseScanner):
             if raw_html is None:
                 raise ValueError("HTML encoding could not be decoded")
             soup = BeautifulSoup(raw_html, "lxml")
+            original_html, original_url, original_soup = raw_html, final_url, soup
+            original_findings = _scan_inputs(soup)
+            original_dynamic_reasons = dynamic_coverage_reasons(soup, original_findings)
             browser_render = self._maybe_render_html(final_url, raw_html, soup)
-            needs_dynamic_analysis = self._should_try_browser_render(raw_html, soup) and not browser_render.available
+            needs_dynamic_analysis = bool(original_dynamic_reasons) or (
+                self._should_try_browser_render(raw_html, soup)
+                and (not browser_render.available or not browser_render.coverage_complete)
+            )
             if browser_render.available and browser_render.html:
                 raw_html = browser_render.html
                 final_url = browser_render.final_url or final_url
-                parsed_url = urlparse(final_url)
                 soup = BeautifulSoup(raw_html, "lxml")
 
             # ── Analiz ──
@@ -429,6 +452,7 @@ class HtmlScraperScanner(BaseScanner):
             external_iframes = _scan_iframes(soup, final_url)
             html_model_result = self._predict_html_model(final_url, raw_html)
             html_training_features = html_model_result.pop("features", None)
+            feature_source, feature_url = raw_html, final_url
 
             forms = soup.find_all("form")
             external_actions, abnormal_actions = external_form_targets(soup, final_url)
@@ -438,6 +462,34 @@ class HtmlScraperScanner(BaseScanner):
 
             # Normal form controls are observations. Risk needs contextual evidence.
             assessment = assess_dom(soup, final_url, input_findings, js_threats, visual_brand_signals)
+            if browser_render.available and raw_html != original_html:
+                original_assessment = assess_dom(
+                    original_soup, original_url, original_findings,
+                    _scan_js_threats(original_soup, original_html),
+                    self._scan_visual_brand_signals(original_soup, original_url, original_findings),
+                )
+                context = dict(assessment.context)
+                context["strong_signal"] = bool(context["strong_signal"] or original_assessment.context["strong_signal"])
+                context["original_static_evidence_retained"] = True
+                assessment = DomAssessment(
+                    max(assessment.score, original_assessment.score),
+                    list(dict.fromkeys(original_assessment.reasons + assessment.reasons)),
+                    assessment.requires_review or original_assessment.requires_review,
+                    context,
+                )
+                original_model = self._predict_html_model(original_url, original_html)
+                original_features = original_model.pop("features", None)
+                # Rendering can add evidence but cannot erase a stronger raw
+                # source-model alert. Bind training data to the selected source.
+                if float(original_model.get("model_risk_score") or 0) > float(html_model_result.get("model_risk_score") or 0):
+                    html_model_result, html_training_features = original_model, original_features
+                    feature_source, feature_url = original_html, original_url
+            # A renderer returning outer DOM text is not evidence that a frame's
+            # contents or sensitive JavaScript data flow has been assessed.
+            coverage_reasons = sorted(set(
+                original_dynamic_reasons + assessment.context["dynamic_review_reasons"]
+            ))
+            needs_dynamic_analysis = needs_dynamic_analysis or bool(coverage_reasons)
             threat_score = assessment.score
             reasons = list(assessment.reasons)
 
@@ -454,11 +506,23 @@ class HtmlScraperScanner(BaseScanner):
                 1 for k, v in input_findings.items()
                 if isinstance(v, list) and len(v) > 0
             )
+            # Identity is bound to the exact decoded source and URL consumed by
+            # feature extraction, including any future rendered replacement.
+            training_payload = {
+                "html_features": html_training_features,
+                "html_hash": hashlib.sha256(feature_source.encode("utf-8")).hexdigest(),
+                "html_hash_scheme": "html-analyzed-utf8-sha256-v1",
+                "feature_url": feature_url,
+            } if html_training_features else {}
 
             details = {
                 "requires_review": assessment.requires_review or needs_dynamic_analysis,
                 "rule_context": assessment.context,
-                "dynamic_analysis": {"required": needs_dynamic_analysis, "available": browser_render.available},
+                "dynamic_analysis": {
+                    "required": needs_dynamic_analysis,
+                    "available": browser_render.available and browser_render.coverage_complete and not bool(coverage_reasons),
+                    "coverage_reasons": coverage_reasons,
+                },
                 "title": title,
                 "total_forms": len(forms),
                 "external_form_actions": external_actions,
@@ -493,7 +557,7 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
-                    training_features={"html_features": html_training_features} if html_training_features else {},
+                    training_features=training_payload,
                 )
             elif threat_score >= 0.3 or assessment.requires_review or needs_dynamic_analysis:
                 return StageResult(
@@ -504,7 +568,7 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason=" | ".join(reasons[:5]),
                     details=details,
-                    training_features={"html_features": html_training_features} if html_training_features else {},
+                    training_features=training_payload,
                 )
             else:
                 return StageResult(
@@ -515,10 +579,10 @@ class HtmlScraperScanner(BaseScanner):
                     clean_probability=html_model_result.get("clean_probability"),
                     reason="DOM structure appears normal",
                     details=details,
-                    training_features={"html_features": html_training_features} if html_training_features else {},
+                    training_features=training_payload,
                 )
 
-        except Exception:
+        except Exception:  # noqa: BLE001 - redact arbitrary parser/model diagnostics.
             return StageResult(
                 scanner=self.name,
                 verdict="unknown",
@@ -539,6 +603,8 @@ class HtmlScraperScanner(BaseScanner):
             final_url,
             timeout_ms=self.browser_timeout_ms,
             screenshot=self.browser_screenshot_enabled,
+            raw_html=raw_html,
+            socket_path=self.browser_socket_path,
         )
         if rendered.available and len(rendered.html) <= len(raw_html) and not rendered.visible_text:
             return BrowserRenderResult(
@@ -565,7 +631,13 @@ class HtmlScraperScanner(BaseScanner):
         # Raw byte length is not evidence that external scripts have been analyzed.
         sparse_shell = bool(scripts) and not inputs and not forms and len(text) < 200
         script_heavy_without_forms = len(scripts) >= 5 and not inputs and not forms and len(text) < 1200
-        return asks_for_javascript or (empty_app_shell and bool(scripts)) or sparse_shell or script_heavy_without_forms
+        return (
+            bool(dynamic_coverage_reasons(soup, _scan_inputs(soup)))
+            or asks_for_javascript
+            or (empty_app_shell and bool(scripts))
+            or sparse_shell
+            or script_heavy_without_forms
+        )
 
     def _scan_visual_brand_signals(
         self,
@@ -683,7 +755,7 @@ class HtmlScraperScanner(BaseScanner):
 
         try:
             return joblib.load(path)
-        except Exception:
+        except Exception:  # noqa: BLE001 - model load failure is reported as unavailable.
             return None
 
     def _predict_html_model(self, final_url: str, raw_html: str) -> dict[str, object]:
@@ -693,7 +765,7 @@ class HtmlScraperScanner(BaseScanner):
                 str(column): float(features.iloc[0][column])
                 for column in features.columns
             }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - third-party feature extraction may fail.
             return {
                 "available": False,
                 "model_path": self.model_path,
@@ -726,7 +798,7 @@ class HtmlScraperScanner(BaseScanner):
                 "feature_count": int(features.shape[1]),
                 "features": feature_values,
             }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - third-party estimators expose varying errors.
             return {
                 "available": False,
                 "model_path": self.model_path,

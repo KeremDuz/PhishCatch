@@ -1,102 +1,31 @@
 # PhishCatch analizinin kapsamı ve sınırları
 
-PhishCatch bir bitirme projesi prototipidir. Sonuç, bağlantının her koşulda
-güvenli olduğuna ilişkin garanti değildir. Mobil uygulamadaki sade sonuç ekranı,
-sunucudaki analiz ve eksik kanıt bilgisini değiştirmez.
+PhishCatch mezuniyet projesi prototipidir. Sade mobil/web sonucu kesin güvenlik garantisi değildir. Güncel karar profili ve işlem sınırları için [DETECTION.md](../apps/backend/DETECTION.md) esas alınır.
 
-## Eğitilmiş modeller
+## Modeller ve başarı ölçümü
 
-Ev sunucusunda seçilen URL modeli, 30 URL özelliğini kullanan bir
-`StandardScaler + RandomForestClassifier` modelidir; 300 ağaç içerir. Dosya
-yaklaşık 656 MB'dır. HTML modeli 78 URL/DOM özelliğini kullanan
-`HistGradientBoostingClassifier` modelidir; çalışma dosyası yaklaşık 859 KB'dır.
-Dosyalar özel, salt okunur model dizininden yüklenir; Git'e veya uygulama
-paketine eklenmez.
+Ev sunucusundaki büyük URL modeli 30 URL özelliği ve 300 ağaç kullanan StandardScaler/RandomForest; HTML modeli 78 özellik kullanan HistGradientBoosting modelidir. Yaklaşık 656 MB ve 859 KB dosyalar özel salt okunur dizindedir, Git'e veya APK'ya gömülmez. İki model gerçek akışta tahmin üretmiştir; dosya büyüklüğü güncel başarı kanıtı değildir.
 
-İki model Linux sunucusunda yüklenmiş ve gerçek analiz akışında tahmin
-üretmiştir. URL modeli, yönlendirme sonrasındaki URL özelliklerini inceler;
-HTML modeli, indirilebilen HTML içeriğini ve DOM özelliklerini inceler. Modelin
-yüklü olması ile belirli bir sayfada HTML analizi yapılabilmesi ayrı durumlardır.
+Kaynak artifact'ler scikit-learn 1.8.0'dan 1.9.1 ortamına uyarlanırken sınırlı yapay örnekler ve eğitilmiş durum kontrol edilmiştir. Bu, bütün girdilerde eşdeğerlik veya güncel doğruluk kanıtlamaz. Özellik çıkarıcıları özgün projeyle korunmuştur. Birleşik kural puanı phishing yüzdesi değildir.
 
-Kaynak modeller scikit-learn 1.8.0 ile oluşturulmuş, çalışma kopyaları 1.9.1
-ortamına uyarlanmıştır. Uyarlama sırasında sınırlı yapay örneklerde tahmin ve
-eğitilmiş durum kontrolleri yapılmıştır. Bu kontrol, sürümler arasında tüm
-girdiler için eşdeğerlik veya güncel internette belirli bir doğruluk oranı
-kanıtlamaz. Dosyanın büyük olması da daha doğru olduğu anlamına gelmez.
+Bağımsız yakın tarihli, doğrulanmış özel arşiv ve [değerlendirme aracı](../apps/backend/BENCHMARK.md) hazırlanır. Eğitim, ayar ve test URL/alan adı/zaman/şablon bakımından ayrılır; belirsiz sonuç başarılı tespit sayılmaz. Testlerin geçmesi ve birkaç zararsız canlı sorgu bu veri çalışmasının yerine geçmez.
 
-Güvenilir bir başarı oranı açıklamadan önce yeni, etiketleri bağımsız doğrulanmış
-bir test kümesi hazırlanmalıdır. Aynı alan adına ait örnekler eğitim ve test
-arasında ayrılmalı; tarih ayrımı, yanlış alarm oranı, phishing yakalama oranı ve
-karar eşiği birlikte değerlendirilmelidir. Model çıktısı, sistemin birleştirilmiş
-kural puanıyla aynı şey değildir; birleşik puan kalibre edilmiş olasılık değildir.
+## Ücretsiz kaynaklar
 
-## Kısmi ve belirsiz sonuç
+Varsayılan ücretsiz profil, eski sağlayıcı anahtarı bulunsa da ücretli/kimlik bilgili entegrasyonu açmaz. Güncel CERT Polska yerel listesi zorunlu kanıttır; özellikle Polonya kullanıcılarını hedefleyen kampanyalara yöneliktir, küresel tam kapsam değildir. URLhaus artık zorunlu phishing kaynağı değildir.
 
-- URLhaus anahtarı mevcut ev sunucusunda tanımlı değildir. Bu kaynak mevcut
-  analiz akışında zorunlu adım olarak bulunduğundan, diğer adımlar çalışsa bile
-  sonuç kısmi/belirsiz kalabilir. Anahtar olmaması, bağlantının zararlı veya temiz
-  olduğuna kanıt sayılmaz. URLhaus dışındaki isteğe bağlı sağlayıcıların da
-  anahtarları tanımlı değildir.
-- Bir tehdit kaynağının URL'yi listesinde bulamaması, sayfanın güvenli olduğunu
-  kanıtlamaz.
-- JavaScript ile oluşan içerik, bot engeli, erişim hatası, süre aşımı, eksik model
-  veya HTML olmayan hedef nedeniyle gerekli kanıt elde edilemeyebilir. Böyle
-  bir sonuç temiz kabul edilmez. Yeterince güçlü zararlı kanıt bulunduğunda,
-  başka bir kaynak eksik olsa bile zararlı uyarısı üretilebilir.
-- Giriş yapılmış kullanıcı oturumu gerektiren veya kullanıcısına özel içerik,
-  tarayıcısındaki hâliyle görülmez; kullanıcının çerezleri sunucuya taşınmaz.
+Etkinleştirilen Cloudflare Security DoH yalnız hostname gönderir. Tam URL yolu, query veya HTML paylaşmaz; Radar'da public tarama oluşturmaz. DNS filtre işareti kesin phishing türü sayılmaz, inceleme/belirsiz sonucudur. Normal DNS cevabı, NXDOMAIN ve hata temiz kanıtı değildir. Yönlendirmede DNS itibar kontrolü GET zincirinden sonradır.
 
-## Sayfa indirme güvenliği ve kaynak sınırları
+## İçerik, özel ağ ve dinamik sayfalar
 
-URL çözümleme ve HTML indirme yalnızca HTTP(S) hedeflerini kullanır. Her
-yönlendirmede hedef tekrar denetlenir. Yerel, özel, ayrılmış, multicast, CGNAT
-(Tailscale dahil) ve IPv6 geçiş adresleri engellenir. Karışık DNS yanıtındaki
-adreslerden biri engelliyse hedefin tamamı reddedilir.
+GET ve yönlendirmelerde hedefler DNS ile doğrulanır; genel IP gerçek sokete sabitlenir ve TLS Host/SNI/sertifika kontrolü korunur. Local/private/reserved/CGNAT/Tailscale ve geçiş IP'leri engellenir. Çerez, netrc, ortam proxy'si veya kullanıcı kimliği taşınmaz. HTML ve açılmış gzip çıktısı en fazla 1 MiB; Brotli desteklenmez. DNS, GET, RDAP ve HTML ayrı sonlandırılabilir süreçlerdedir; bunlar tek başına tarayıcı/ağ sandbox'ı değildir.
 
-Denetlenmiş genel IP, gerçek bağlantı hedefine sabitlenir; böylece DNS'in kontrol
-sonrası farklı IP vermesi özel ağa erişim açmaz. HTTPS bağlantısı özgün sunucu
-adını Host, TLS SNI ve sertifika denetiminde korur. Ortam proxy'leri, netrc
-kimlik bilgileri ve otomatik yönlendirmeler kullanılmaz. Sertifika denetimi
-kapatılmaz.
+Hassas formdaki değerlendirilemeyen JavaScript, iframe, erişim engeli veya gerekli katmanın çalışmaması temiz sonuç verdirmez. Normal kart/CSRF/iframe/klavye olayı tek başına tehdit puanı değildir. Alan adı yaşı ve HTTPS temizlik kanıtı değildir. RDAP yalnız yardımcı bağlamdır.
 
-HTML gövdesi en fazla 1 MB'dır. Gövde okuyucusu dolu bir blok beklemek yerine
-eldeki veriyi okur; okumalar arasında 15 saniyelik duvar saati bütçesini denetler.
-Soket bekleme süresi en fazla 5 saniyedir, mümkün olduğunda kalan bütçeye göre
-kısaltılır. Geç gelen veri özellik çıkarımına aktarılmaz. Bağlantılar hata ve
-yönlendirme durumunda da kapatılır. Sunucunun `Accept-Encoding: identity`
-isteğine rağmen sıkıştırılmış gövde göndermesi, kontrolsüz açma döngüsü yerine
-eksik analiz olarak ele alınır.
+İsteğe bağlı renderer ayrı ağsız konteynerde yalnız verilen orijinal HTML ve inline kodu çalıştırır. Dış JS/CSS/iframe, özgün HTTP güvenlik başlıkları, kullanıcı etkileşimi, OCR/ekran görüntüsü yoktur; kapsam her zaman eksik kalır. Ev sunucusunda ilk Chromium sandbox açılışı başarısız olduğundan bu özellik kapalıdır. Güvenlik kısıtları kaldırılarak açılmaz. Statik modeller çalışmaya devam eder.
 
-Bu bütçe tüm analiz isteğinin kesin toplam süresi değildir. İlk DNS çözümlemesi,
-yanıt başlıkları, HTTP aktarım çerçevesi ve diğer tarayıcı adımları için ayrı,
-zorla sonlandırılabilir bir işçi süreci henüz yoktur. Eşzamanlı istek ve istek
-sıklığı sınırları riski azaltır; uygulama hizmet engelleme saldırılarına dayanıklı
-bir genel servis olarak sunulamaz. Herhangi bir kaynak eksiğini temiz sonucuna
-çevirerek süreyi kısaltmamak gerekir.
+## Anonim kullanım ve eğitim
 
-WHOIS sorgusu ayrı bir yerel araçla, kabuk açmadan, yalnızca geçerli DNS
-etiketleriyle, seçenek sonlandırıcısı (`--`) ve 3 saniyelik süreç zaman aşımıyla
-çalıştırılır. Bu protokolün kayıt kuruluşu yönlendirmeleri, HTTP için uygulanan
-IP sabitleme politikasını kullanmaz. WHOIS ağ çıkışı ve süreç çıktısı için tam
-yalıtım, ayrı analiz işçisi tasarımında ayrıca ele alınmalıdır.
+Anonim consumer-1 yanıtı yalnız sürüm, URL, karar ve tarama durumunu içerir; gözlem veya eğitim örneği oluşturmaz. ALLSAFE kimliği ve yönetim yetkileri ayrı korunur. Tahmin, insan tarafından doğrulanmış etiket ve model yayını farklı işlemlerdir.
 
-## JavaScript ve tarayıcı yalıtımı
-
-Ev sunucusunda headless tarayıcı kapalıdır. Önceki tarayıcı uygulamasının yalnız
-ilk URL'yi denetlemesi; yönlendirme, iframe ve JavaScript alt isteklerini
-sınırlandırmaması nedeniyle, seçenek açılsa bile tarayıcı başlatılmaz ve açıkça
-eksik analiz döner. Dinamik sayfa desteği ancak ağ çıkışı kısıtlanmış, sunucunun
-özel ağlarına erişemeyen ayrı bir tarayıcı işçisiyle eklenmelidir. Bu özellik
-kapalıyken statik HTML ve URL modelleri çalışmaya devam eder.
-
-## Anonim kullanım ve eğitim verisi
-
-Anonim tüketici akışı yalnızca sade analiz sonucunu döndürmelidir; hesap,
-yönetim, genel tarama geçmişi, model dosya yolu, sağlayıcı ayrıntıları veya eğitim
-onayı vermez. Anonim tarama, tek başına bir eğitim etiketi değildir. Anonim
-akışın varsayılanı sunucuda tarama gözlemi veya eğitim örneği oluşturmamaktır.
-
-Kurumsal ALLSAFE akışının kimlik doğrulaması ve yetkileri ayrıdır. Doğrulanmış
-etiket, eğitim için onay ve yeni modelin yayına alınması ayrı işlemler olarak
-kalır. Bir tahminin kendi çıktısıyla yeniden eğitilmesi, modelin hatalarını
-doğrulanmış veri gibi çoğaltacağı için otomatik yapılmaz.
+Gözlem kaydında ham HTML yerine gerçekten analiz edilen kaynağın özeti ve sayısal özellikler korunur. Kaynak URL eşleşmezse HTML eğitim verisi kullanılmaz. Eski doğrudan eğiticiler dosya yazmaz; aday/yayın akışı aktif dosya, takma ad ve kalite kapılarını denetler. Bu sürüm modelleri yeniden eğitmez veya otomatik yayımlamaz.

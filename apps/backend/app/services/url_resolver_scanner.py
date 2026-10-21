@@ -21,7 +21,11 @@ class UrlResolverScanner(BaseScanner):
                 details=page.metadata(),
             )
         except FetchFailure as exc:
-            details: dict[str, object] = {"error": exc.code, "resolved_url": url}
+            details: dict[str, object] = {
+                "error": exc.code,
+                "resolved_url": exc.resolved_url or url,
+                "redirect_chain": list(exc.redirect_chain),
+            }
             if exc.safety is not None:
                 details["safety"] = exc.safety
             return StageResult(

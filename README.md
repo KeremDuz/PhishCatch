@@ -1,158 +1,47 @@
 # PhishCatch
 
-FastAPI tabanlı URL phishing analiz servisi ve Flutter tabanlı web/mobil istemci.
+URL ve QR bağlantılarını inceleyen FastAPI servisi ve sade, mavi Flutter web/Android uygulaması. Mezuniyet projesi prototipidir; güncel doğruluk oranı veya kesin güvenlik garantisi sunmaz.
 
-Bağımsız tüketici sürümü mavi ve sade URL/QR arayüzü kullanır; ALLSAFE hesabı gerektirmez. `PHISHCATCH_CONSUMER_MODE=true` sürümü yalnız dar `/api/v1/public/analyze` sözleşmesine bağlanır; kurum yönetimi ve eğitim ekranları bu sürümde bulunmaz. Analiz sınırları için [teknik notlara](docs/analysis-limitations.md) bakın. Kurum için ALLSAFE entegrasyonu ayrı olarak korunur.
+Bağımsız tüketici sürümü giriş gerektirmez ve yalnız dar `consumer-1` yanıtını kullanır. ALLSAFE kurum oturumu, merkezi kayıtlar ve yönetici tarafından eğitim onayı ayrı tutulur. Anonim tarama eğitim örneği oluşturmaz.
 
-## Bağımsız web yayını
+## Çalışan analiz profili
 
-PhishCatch web arayüzü `https://keremduz.github.io/PhishCatch/` altında statik olarak yayımlanabilir. Analizler ev sunucusundaki `https://keremserver.tailf2e48d.ts.net:8443/api/v1/public/analyze` adresinde çalışmaya devam eder; model ve veritabanı Pages’e taşınmaz. Kurum paneli bu yayından ayrıdır.
+Güncel yerel uyarı listesi, aynı GET içeriğinden yönlendirme ve HTML incelemesi, eğitilmiş URL modeli ve HTML modeli birlikte değerlendirilir. RDAP kayıt bilgisi yardımcı bağlamdır. Alan adı yaşı, HTTPS veya listede bulunmamak temiz kanıtı değildir. Eksik ya da çözülemeyen inceleme belirsiz kalır.
 
-`.github/workflows/pages.yml`, `main` güncellemelerinde veya `main` üzerinde elle başlatıldığında Flutter `3.47.7` ve kilitli bağımlılıklarla testi, analizi ve derlemeyi yürütür. Dağıtım başlangıçta kapalıdır: yalnız ayrıca onaylanıp depo değişkeni `PHISHCATCH_PAGES_ENABLED=true` yapıldığında çalışır. İş akışı Pages sitesini kendi kendine etkinleştirmez; onaydan sonra depo için **Settings → Pages → Source: GitHub Actions** ayrıca ayarlanır. İş akışı [GitHub’ın özel Pages iş akışı modelini](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) kullanır; kullanıcı parolası veya uygulama anahtarı içermez.
+`REPUTATION_FREE_ONLY=true` varsayılandır. Bu profilde anahtar tanımlansa bile Google, VirusTotal ve URLhaus gibi eski kimlik bilgili sağlayıcılar etkinleştirilmez. `CLOUDFLARE_DNS_SECURITY_ENABLED=1` ücretsiz, anahtarsız Cloudflare güvenlik DNS kontrolünü ekler. Yalnız hostname gönderilir; Radar URL taraması yayımlanmaz. DNS filtre uyarısı kesin phishing sayılmaz, inceleme gerektirir.
 
-Yerel Pages derlemesi:
+Hassas formun JavaScript davranışı veya iframe içeriği incelenemiyorsa sonuç temiz/tamamlandı olmaz. İsteğe bağlı ağsız renderer yalnız mevcut HTML içindeki koddan ek DOM kanıtı çıkarabilir; dış kaynaklar, gerçek kullanıcı etkileşimi ve tam dinamik inceleme sağladığı iddia edilmez.
 
-```powershell
-./scripts/build_public_web.ps1 -StaticPages -PhishCatchApiBaseUrl 'https://keremserver.tailf2e48d.ts.net:8443' -OutputDirectory './build/pages'
-```
+## Kurulum ve kontrol
 
-`-StaticPages`, varsayılan taban yolu `/PhishCatch/` ile birlikte yalnız tüketici web sürümünde kullanılan `PHISHCATCH_PUBLIC_API_ORIGIN` değerini derleme sırasında belirler. Değer yalnız HTTPS kök adresi olabilir; adres çubuğu, sorgu parametresi veya kullanıcı girişiyle değişmez. Varsayılan web derlemesi kendi kaynağına bağlanır; APK ve ALLSAFE oturum kuralları korunur. Gerekirse `-BaseHref '/baska-yol/'` verilebilir. Pages yalnız anonim analiz API’sini kullanır; oturum, entegrasyon veya CSRF anahtarı göndermez. API tarafında yalnız `https://keremduz.github.io` kaynağına ve gereken analiz yoluna CORS izni verilmelidir. Eski Flutter önbelleği temizlenirken diğer `github.io` projelerinin service worker ve önbellek kayıtları korunur.
+Python 3.12 ile ayrı sanal ortamda, backend dizininden:
 
-## Backend Akışı
-
-1. `UrlResolverScanner`: Redirect zincirini güvenli şekilde çözer.
-2. `WhoisScanner`: Domain yaşını kontrol eder.
-3. `URLhausScanner`: Bilinen zararlı URL veritabanını sorgular.
-4. `GoogleSafeBrowsingScanner`: API key varsa Google Safe Browsing sorgular.
-5. `VirusTotalScanner`: API key/key listesi varsa VirusTotal sorgular; 429 limitinde sıradaki key'e geçer.
-6. `MLModelScanner`: Yeni modeller için URL-only lexical feature şeması kullanır; eski 48-feature ve legacy 16-feature artifact'leri de uyumluluk için desteklenir.
-7. `HtmlScraperScanner`: DOM/form/JS sinyallerini inceler.
-8. `RiskAggregator`: Tüm sinyalleri birleştirip kullanıcıya `malicious`, `clean` veya `unknown` sonucu döndürür.
-
-URL fetch eden scanner'lar localhost/private/reserved IP hedeflerini engeller ve redirect'leri manuel takip eder.
-Bu tip güvenli olmayan hedefler üçüncü taraf reputation servislerine de gönderilmez; ilgili stage'ler `skipped` olarak raporlanır.
-Tekil scanner'lar artık final kararı erken kesmez; WHOIS gibi zayıf sinyaller risk puanına katkı yapar, URLhaus/Google Safe Browsing/VirusTotal gibi güçlü reputation kaynakları daha yüksek ağırlık alır.
-
-## Kurulum
-
-```bash
-cd /home/keremduz/Phishing_detection_system
-source .venv/bin/activate
-pip install -r apps/backend/requirements.txt
-```
-
-Backend gerçek ayarları `apps/backend/.env` dosyasından okur. Projeyi zip ile paylaşırken bu dosyanın klasörde kaldığından emin olun.
-
-VirusTotal için tek key hâlâ desteklenir, çoklu key için virgülle ayrılmış liste verilebilir:
-
-```bash
-VIRUSTOTAL_API_KEY=ilk_key
-VIRUSTOTAL_API_KEYS=ikinci_key,ucuncu_key
-```
-
-Numaralı key formatı da desteklenir:
-
-```bash
-VIRUSTOTAL_API_KEY1=ilk_key
-VIRUSTOTAL_API_KEY2=ikinci_key
-VIRUSTOTAL_API_KEY3=ucuncu_key
-VIRUSTOTAL_API_KEY4=dorduncu_key
-VIRUSTOTAL_API_KEY5=besinci_key
-VIRUSTOTAL_API_KEY6=altinci_key
-VIRUSTOTAL_API_KEY7=yedinci_key
-```
-
-Değişkenler birlikte kullanılırsa sistem önce `VIRUSTOTAL_API_KEY`, sonra `VIRUSTOTAL_API_KEYS`, sonra `VIRUSTOTAL_API_KEY1`, `VIRUSTOTAL_API_KEY2` şeklinde sırayla dener.
-
-## Çalıştırma
-
-```bash
-cd /home/keremduz/Phishing_detection_system/apps/backend
-source ../../.venv/bin/activate
-uvicorn app.main:app --reload --port 8001
-```
-
-## Docker
-
-Backend ve Flutter web'i tek komutla ayağa kaldırmak için:
-
-```bash
-cd /home/keremduz/Phishing_detection_system
-scripts/start_project.sh
-```
-
-- Frontend: `http://localhost:8080`
-- Backend health: `http://localhost:8001/health`
-
-Arka planda çalıştırmak için:
-
-```bash
-scripts/start_project.sh --detached
-```
-
-Script önce Flutter web build'ini `PHISHCATCH_API_BASE_URL=http://localhost:8001` ile üretir, sonra Docker Compose ile backend ve frontend konteynerlerini build edip başlatır. Backend konteyneri `apps/backend/.env` dosyasını runtime'da okur; VirusTotal/Google/API key değerleri imaja gömülmez.
-
-Tekil imajlar:
-
-```bash
-docker build -t phishcatch-backend:local apps/backend
-PHISHCATCH_API_BASE_URL=http://localhost:8001 scripts/build_flutter_web.sh
-docker build -t phishcatch-frontend:local apps/flutter_app
-```
-
-Azure Container Apps deploy adımları için: `apps/backend/DEPLOY_AZURE.md`.
-
-## Hızlı Kontrol
-
-Bu smoke test gerçek internet çağrısı veya model tahmini yapmaz; sadece FastAPI app import, route ve health fonksiyonunu kontrol eder.
-
-```bash
-cd /home/keremduz/Phishing_detection_system/apps/backend
-source ../../.venv/bin/activate
+```sh
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pytest tests -q
 python scripts/smoke_test_fastapi.py
+uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-Tüm lokal kalite kontrolleri için:
+Çalışma zamanı kurulumu için `requirements.lock` kullanılır. Gerçek model dosyaları Git ve imaj dışında sağlanır; uyumlu, yönetici tarafından doğrulanmış artifact gerekir. Model eksikliği temiz sonuç ürettirmez. `.env`, anahtarlar, ham HTML, model dosyaları ve yerel veritabanları Git'e veya paylaşılacak proje arşivine eklenmez.
 
-```bash
-bash scripts/quality_check.sh
-```
+## Eğitim ve değerlendirme
 
-## URL Analizi
+Eski `train_model.py` ve `train_html_model.py` çalıştırmaları dosya yazmadan kapanır. Doğrulanmış veriyi `scripts/export_training_datasets.py` ile dışa aktarın; `scripts/retrain_models.py` yalnız aday oluşturur. `scripts/promote_candidate_models.py` dosya kimliği ve kalite kapılarından sonra ayrı yayın işlemidir. Aktif artifact salt okunur bağlanmışsa bu koruma kaldırılmaz; yayın ayrı yönetici işidir ve servis yeniden başlatılması gerekir.
 
-```bash
-cd /home/keremduz/Phishing_detection_system/apps/backend
-source ../../.venv/bin/activate
-python scripts/check_url.py -u "https://example.com"
-```
+Gerçek analiz edilen HTML'nin UTF-8 özeti ve kaynak URL'si eğitim kaydına kadar taşınır. Ham HTML varsayılan olarak saklanmaz. Tahmin etiketi otomatik olarak doğrulanmış etiket sayılmaz.
 
-API yanıtında `final_verdict`, `risk_score`, `confidence`, `summary`, `signals` ve scanner bazlı `stages` bulunur. Uygulama tarafında kullanıcıya `final_verdict` gösterilmeli; debug veya açıklama ekranı için `summary/signals/stages` kullanılabilir.
+Bağımsız, özel arşivden ağsız değerlendirme: [BENCHMARK.md](apps/backend/BENCHMARK.md). Eğitim ve test ayrımı, belirsiz sonuçlar, model sürümleri ve kaynak kanıtı raporlanır. Test verisi toplanmadan bir başarı yüzdesi verilmez.
 
-## Model Eğitimi
+## Web ve mobil
 
-```bash
-cd /home/keremduz/Phishing_detection_system/apps/backend
-source ../../.venv/bin/activate
-python feature_extractor.py
-python train_model.py
-```
+Halka açık web: https://keremduz.github.io/PhishCatch/ . Analiz ev sunucusundaki tüketici API'sinde yapılır; model ve veritabanı Pages'e taşınmaz. APK ve Flutter bilgileri [mobil belgede](apps/flutter_app/README.md).
 
-Varsayılan eğitim artık sadece URL'den görülebilen lexical feature'ları üretir. Site içeriği, form alanları, iframe ve JavaScript sinyalleri ML feature setinde değil, `HtmlScraperScanner` katmanında değerlendirilir.
+Pages iş akışı yalnız ayrıca etkinleştirilen `PHISHCATCH_PAGES_ENABLED=true` depo değişkeniyle yayın yapar. Tüketici sürümü ALLSAFE kullanıcı oturumu veya entegrasyon anahtarı taşımaz.
 
-`feature_extractor.py`, varsayılan olarak `phishcatch_training_data_url.csv` üretir. Eski 48 kolonlu uyumluluk datası gerektiğinde:
+## Belgeler
 
-```bash
-python feature_extractor.py --schema mendeley48
-```
-
-`train_model.py`, `StandardScaler + RandomForestClassifier` içeren tek bir sklearn pipeline artifact'i üretir: `phishcatch_url_model.pkl`.
-
-Eski ayrık artifact seti kullanılıyorsa `.env` içinde `ML_MODEL_PATH=phishcatch_rf_model_48.pkl` ve `ML_SCALER_PATH=phishcatch_scaler_48.pkl` birlikte verilmelidir. Yeni pipeline artifact yeniden üretildikten sonra `ML_SCALER_PATH` boş bırakılabilir.
-
-## Yerel Artifact Notları
-
-`Mendeley_dataset/`, generated CSV sonuçları, `.venv/`, `apps/flutter_app/.dart_tool/` ve `apps/flutter_app/build/` yerel/üretilen artifact olarak görülmelidir. Proje zip ile paylaşılacaksa gerçek `apps/backend/.env` ve çalışan model dosyaları klasörde kalmalı; büyük eğitim veri seti ve sanal ortam zip dışında bırakılmalıdır.
-
-## ALLSAFE bağlantısı
-
-İsteğe bağlı kurum modu, merkezi tarama kayıtları ve analiz sözleşmesi sürüm 2 için [backend bağlantı belgesi](apps/backend/README.md) ve [mobil kullanım belgesi](apps/flutter_app/README.md) incelenmelidir. Model tahmini, doğrulanmış etiket ve eğitim onayı ayrı kalır.
+- [Tespit politikası, ücretsiz kaynaklar ve sınırlar](apps/backend/DETECTION.md)
+- [Bağımsız değerlendirme](apps/backend/BENCHMARK.md)
+- [Backend ve ALLSAFE sözleşmesi](apps/backend/README.md)
+- [Mobil/web kullanımı](apps/flutter_app/README.md)

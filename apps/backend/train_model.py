@@ -1,67 +1,33 @@
 from __future__ import annotations
 
 import argparse
-import joblib
-import pandas as pd
+import sys
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from app.ml.feature_extractor import URL_FEATURE_COLUMNS
 from app.ml.incremental_model import IncrementalBinaryClassifier
 
 INPUT_DATA_PATH = "phishcatch_training_data_url.csv"
-MODEL_OUTPUT_PATH = "phishcatch_url_model.pkl"
+MODEL_OUTPUT_PATH = "models/candidates/phishcatch_url_model_legacy.pkl"
 TARGET_COLUMN = "result"
 
 
-def main() -> None:
-    args = parse_args()
-    print("1. Egitim verisi yukleniyor...")
-    dataframe = pd.read_csv(args.input_data)
-
-    if TARGET_COLUMN not in dataframe.columns:
-        raise ValueError(f"{args.input_data} must include '{TARGET_COLUMN}' column")
-
-    feature_columns = [column for column in URL_FEATURE_COLUMNS if column in dataframe.columns]
-    if len(feature_columns) != len(URL_FEATURE_COLUMNS):
-        feature_columns = [column for column in dataframe.columns if column != TARGET_COLUMN]
-
-    features = dataframe[feature_columns].fillna(0.0)
-    labels = dataframe[TARGET_COLUMN].astype(int)
-
-    print(f"Veri boyutu: {len(features)} satir, {features.shape[1]} feature")
-
-    x_train, x_test, y_train, y_test = train_test_split(
-        features,
-        labels,
-        test_size=0.2,
-        random_state=42,
-        stratify=labels,
+def main() -> int:
+    parse_args()
+    print(
+        "Bu eski egitim komutu kaldirildi; hicbir model dosyasi yazilmadi. "
+        "Dogrulanmis ornekleri scripts/export_training_datasets.py ile aktarip "
+        "scripts/retrain_models.py ile aday model olusturun. "
+        "Aktif model yalniz scripts/promote_candidate_models.py kontrollerinden "
+        "sonra degistirilebilir.",
+        file=sys.stderr,
     )
-
-    print(f"2. Model egitiliyor ({args.model_family})...")
-    pipeline = build_model(args, feature_columns)
-    pipeline.fit(x_train, y_train)
-
-    print("3. Test setinde degerlendirme yapiliyor...")
-    predictions = pipeline.predict(x_test)
-    accuracy = accuracy_score(y_test, predictions)
-
-    print("\nModel Degerlendirme Sonucu")
-    print(f"Accuracy: {accuracy:.6f}")
-    print("\nSiniflandirma Raporu:\n", classification_report(y_test, predictions, digits=4))
-
-    final_model = build_model(args, feature_columns)
-    final_model.fit(features, labels)
-    joblib.dump(final_model, args.model_output)
-    print(f"\nModel kaydedildi: {args.model_output}")
+    return 2
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the URL phishing model.")
+    parser = argparse.ArgumentParser(description="Retired URL trainer: use scripts/retrain_models.py; no artifacts are written.")
     parser.add_argument("--input-data", default=INPUT_DATA_PATH)
     parser.add_argument("--model-output", default=MODEL_OUTPUT_PATH)
     parser.add_argument("--model-family", choices=("incremental", "batch"), default="incremental")
@@ -100,4 +66,4 @@ def build_model(args: argparse.Namespace, feature_columns: list[str]):
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
